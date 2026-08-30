@@ -202,7 +202,7 @@ preserving the associated historical activity.
 
 CredChain connects academic credentials with recruitment workflows.
 
-A typical application lifecycle is:
+A typical successful application lifecycle is:
 
 ```text
 APPLIED
