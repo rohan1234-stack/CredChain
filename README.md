@@ -145,7 +145,7 @@ The institution signs this canonical payload using its signing key.
 During verification, the backend reconstructs the canonical payload and
 verifies the digital signature.
 
-This allows CredChain to detect changes to the signed credential metadata
+This allows CredChain to detect changes to signed credential metadata
 after issuance.
 
 ---
@@ -212,3 +212,385 @@ UNDER_REVIEW
 SHORTLISTED
    ↓
 ACCEPTED
+```
+
+Applications can also move through valid terminal outcomes such as:
+
+```text
+REJECTED
+WITHDRAWN
+```
+
+Application transitions are recorded in the activity history so users
+can see the actual workflow rather than only the latest status.
+
+CredChain also prevents duplicate job applications for the same student
+and job.
+
+---
+
+# ⏱️ Timestamped Workflow History
+
+CredChain provides timestamped workflow timelines for important actions.
+
+### Certificate Request
+
+```text
+REQUESTED
+    ↓
+APPROVED
+    ↓
+FULFILLED
+```
+
+or:
+
+```text
+REQUESTED
+    ↓
+REJECTED
+```
+
+### Job Application
+
+```text
+APPLIED
+    ↓
+UNDER_REVIEW
+    ↓
+SHORTLISTED
+    ↓
+ACCEPTED
+```
+
+with valid rejection and withdrawal paths.
+
+The timelines are based on recorded workflow events and display actual
+timestamps for states that were reached. The system does not fabricate
+timestamps for states that never occurred.
+
+---
+
+# ✅ Deterministic Eligibility
+
+Eligibility is calculated by the backend using trusted structured
+credential metadata.
+
+The system evaluates criteria such as:
+
+- Degree
+- CGPA
+- Graduation year
+
+Example:
+
+```text
+Credential CGPA: 9.6
+Job minimum CGPA: 5.0
+
+→ CGPA requirement: PASS
+```
+
+The eligibility engine is deterministic and rule-based.
+
+AI assistance does not replace the deterministic eligibility decision.
+
+---
+
+# 🤖 AI-Assisted Analysis
+
+CredChain supports AI-assisted analysis for:
+
+- Job requirement extraction
+- Required-document analysis
+- Company intelligence
+- Credential/job matching assistance
+
+The production deployment uses the configured Groq provider when
+`AI_ENABLED=true`.
+
+AI acts as an assistance layer; the final deterministic eligibility
+decision remains backend-driven.
+
+---
+
+# 🔎 Credential Verification
+
+Credential verification evaluates multiple independent signals.
+
+### 1. Issuer Identity
+
+Confirms that the issuing institution is registered and has the
+cryptographic information required for verification.
+
+### 2. Digital Signature
+
+Verifies that the credential's signed metadata matches what was issued.
+
+### 3. Document Unaltered
+
+Verifies that the retrieved document matches the document hash recorded
+at issuance.
+
+### 4. Credential Status
+
+Checks whether the credential is currently active or has been revoked.
+
+### 5. Access Authorization
+
+Confirms that the requesting viewer has permission to access the
+credential.
+
+### 6. Credential Type Matching
+
+Detects when the credential being presented does not match the credential
+type originally requested.
+
+---
+
+# 🗂️ Document Storage
+
+CredChain uses private Supabase Storage for application documents.
+
+Credential documents are stored in the private:
+
+```text
+credential-documents
+```
+
+bucket using credential-specific object paths.
+
+Student-uploaded documents are stored in the private:
+
+```text
+student-documents
+```
+
+bucket using student-document-specific object paths.
+
+Private storage is accessed through the backend using server-side
+credentials and application authorization.
+
+The Supabase service-role credential is never exposed to the frontend.
+
+---
+
+# 🧱 System Architecture
+
+```text
+┌───────────────────────────┐
+│      React Frontend       │
+│     TypeScript + Vite     │
+└─────────────┬─────────────┘
+              │
+              │ REST API
+              ▼
+┌───────────────────────────┐
+│       FastAPI Backend     │
+│                           │
+│ Authentication            │
+│ Authorization             │
+│ Credential Issuance       │
+│ Verification              │
+│ Eligibility               │
+│ Job Applications          │
+│ Notifications             │
+│ Activity Logging          │
+└─────────────┬─────────────┘
+              │
+       ┌──────┴─────────┐
+       ▼                ▼
+┌──────────────┐  ┌──────────────────┐
+│  PostgreSQL  │  │ Supabase Storage │
+│   Database   │  │ Private Documents│
+└──────────────┘  └──────────────────┘
+```
+
+Supporting platform components include:
+
+- JWT-based authentication
+- Role-based authorization
+- Ed25519 credential signing
+- SHA-256 document hashing
+- Activity logging
+- Notification workflows
+- Controlled credential sharing
+- Organization directory
+- AI-assisted analysis
+
+---
+
+# 🔐 Security Principles
+
+CredChain is designed around:
+
+- Server-side authorization
+- Role-based access boundaries
+- Student ownership checks
+- Institution ownership checks
+- Company ownership checks
+- Cryptographic credential signing
+- Document hashing
+- Private document storage
+- Share-grant authorization
+- Share revocation
+- Activity logging
+- Duplicate job-application protection
+- Safe storage failure handling
+- Backend-only service credentials
+
+Sensitive deployment values are supplied through environment
+configuration rather than committed into the frontend application.
+
+---
+
+# 🌐 Organization Directory
+
+CredChain supports discovery of institutions and companies through a
+global organization directory.
+
+The directory supports:
+
+- Institution search
+- Company search
+- Name-based discovery
+- Signup organization selection
+- Directory-only organizations
+- Registered organization accounts
+
+See:
+
+**[docs/DIRECTORY.md](docs/DIRECTORY.md)**
+
+for directory architecture, data sources, and import information.
+
+---
+
+# 🔔 Notifications and Activity
+
+CredChain provides notification and activity workflows across important
+events such as:
+
+- Credential requests
+- Credential issuance
+- Credential sharing
+- Share revocation
+- Job applications
+- Application status changes
+
+Activity history complements workflow timelines by preserving the record
+of relevant system events.
+
+---
+
+# 🧪 Validation
+
+The project has been validated using:
+
+- TypeScript compilation
+- Production frontend builds
+- ESLint
+- Python static analysis with Pyflakes
+- Backend test collection
+- Targeted backend logic validation
+- Production smoke testing of major workflows
+
+Some backend tests require a local PostgreSQL environment for full
+execution.
+
+---
+
+# 🚀 Deployment
+
+### Frontend
+
+**Vercel**
+
+https://cred-chain-five.vercel.app/
+
+### Backend
+
+**Render**
+
+https://credchain-backend-wg6v.onrender.com
+
+The frontend communicates with the deployed backend through
+environment-configured API settings.
+
+---
+
+# 📚 Documentation
+
+Additional project documentation is available in:
+
+```text
+docs/
+```
+
+including the organization directory documentation.
+
+---
+
+# 🎯 Project Goal
+
+CredChain aims to make academic credentials:
+
+**Authentic. Portable. Verifiable. Shareable. Auditable.**
+
+Instead of treating an academic credential as only a PDF, CredChain
+connects the credential with the broader academic and recruitment
+workflow:
+
+```text
+Institution
+    ↓
+Cryptographic Issuance
+    ↓
+Student Ownership
+    ↓
+Controlled Sharing
+    ↓
+Company Verification
+    ↓
+Eligibility Evaluation
+    ↓
+Job Application
+    ↓
+Application Workflow
+    ↓
+Timestamped Audit History
+```
+
+---
+
+# 🛠️ Technology Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React + TypeScript + Vite |
+| Backend | FastAPI + Python |
+| Database | PostgreSQL |
+| Authentication | JWT-based authentication |
+| Credential Signing | Ed25519 |
+| Document Hashing | SHA-256 |
+| Document Storage | Supabase Storage |
+| AI Assistance | Groq |
+| Frontend Hosting | Vercel |
+| Backend Hosting | Render |
+
+---
+
+## 🔗 Live Application
+
+**[🚀 Open CredChain](https://cred-chain-five.vercel.app/)**
+
+---
+
+## 📌 Project Status
+
+**Production-ready project build**
+
+The current implementation includes credential issuance, cryptographic
+verification, private document storage, controlled sharing,
+deterministic eligibility evaluation, job applications, notifications,
+and timestamped workflow history.
