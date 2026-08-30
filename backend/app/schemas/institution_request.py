@@ -44,3 +44,8 @@ class InstitutionCertificateRequestResponse(BaseModel):
     fulfilled_credential_id: uuid.UUID | None
     created_at: datetime
     responded_at: datetime | None
+    # Only set when status == FULFILLED — the moment the institution actually issued the
+    # credential that satisfies this request (the linked credential's own issued_at, never a
+    # separate/new timestamp). None for PENDING, APPROVED, and REJECTED. See
+    # institution_request_service.to_response for exactly how this is derived.
+    fulfilled_at: datetime | None

@@ -102,3 +102,47 @@ class ShareTokenAccessResponse(BaseModel):
     expires_at: datetime
     credentials: list[ShareCredentialPreview]
     permission: str
+
+
+# Filter values accepted by GET /api/companies/me/shared-credentials?status=. Deliberately just
+# the four real cryptographic outcomes a company can filter by — "not verified" is a display
+# state (see SharedCredentialItem.latest_verification_result being null), never something to
+# filter FOR, since there's no server-side event to match against.
+SHARED_CREDENTIAL_STATUS_FILTERS = ("verified", "invalid", "revoked", "expired")
+
+
+class SharedCredentialItem(BaseModel):
+    """
+    One row in a company's "Credentials Shared With You" inbox — one per
+    (share_grant, credential) pair, so the same credential shared via two
+    separate grants legitimately appears twice, distinguishable by share_id/
+    shared_at/permission (never silently deduplicated).
+
+    latest_verification_result is the RESULT OF THE MOST RECENT REAL
+    POST /api/verification/verify CALL this company made against this
+    credential — null means this company has never actually verified it.
+    This is deliberately never inferred from share/credential status alone:
+    a badge here must reflect a real cryptographic check that happened, not
+    merely that a share exists or was opened (see verification_service.py,
+    unchanged by this feature).
+    """
+
+    id: uuid.UUID  # credential id
+    share_id: uuid.UUID
+    student_id: uuid.UUID
+    student_name: str
+    credential_type: CredentialType
+    title: str
+    degree: str | None
+    graduation_year: int | None
+    cgpa: float | None
+    institution_name: str
+    issued_at: datetime
+    permission: str
+    share_status: str  # active | expired | revoked — the GRANT's own lifecycle, not the credential's
+    shared_at: datetime
+    share_expires_at: datetime
+    # None means never verified by this company yet ("NOT VERIFIED" in the UI) — otherwise one
+    # of VERIFIED / INVALID / REVOKED / EXPIRED / UNAUTHORIZED / TYPE_MISMATCH.
+    latest_verification_result: str | None
+    latest_verified_at: datetime | None

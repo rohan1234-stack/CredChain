@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, Sparkles, Shield, Mail, Check, Briefcase, FileStack, Share2, Inbox, Wallet } from 'lucide-react'
+import { ArrowRight, Sparkles, Shield, Briefcase, FileStack, Share2, Inbox, Wallet } from 'lucide-react'
 import { getCredentials, getActivity, getStudentRequests, getOpenJobs, getStudentShares, getMyJobApplications } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
 import type { Credential, AccessLogEntry, Job } from '../../types'
@@ -8,7 +8,7 @@ import { Card, Button, StatCard, EmptyState, CheckRow, GlassPanel, Glow, Credent
 import { SkeletonGrid, SkeletonCard, SkeletonRow } from '../../components/ui/Skeleton'
 import { CredentialCard } from './components/CredentialCard'
 import { InstitutionLink } from './components/InstitutionLink'
-import { timeBasedGreeting } from '../../lib/utils'
+import { timeBasedGreeting, ACTIVITY_ICON_MAP, TONE_CLASSES } from '../../lib/utils'
 
 /** Splits "Good Morning, Rohan" into the period text and the real first name, so only the
  * name gets the Stitch gradient treatment (kept local to this page — no change to the shared
@@ -18,8 +18,6 @@ function splitGreetingLocal(greeting: string): { period: string; name: string | 
   if (idx === -1) return { period: greeting, name: null }
   return { period: greeting.slice(0, idx), name: greeting.slice(idx + 2) }
 }
-
-const LOG_ICON = { shield: Shield, mail: Mail, check: Check }
 
 function groupByDay(log: AccessLogEntry[]) {
   const today = log.filter((l) => l.timestamp.includes('AM') || l.timestamp.includes('PM') || l.timestamp === 'Just now')
@@ -220,12 +218,11 @@ export function StudentDashboard() {
 }
 
 function ActivityRow({ entry }: { entry: AccessLogEntry }) {
-  const Icon = LOG_ICON[entry.icon]
-  const tone = entry.icon === 'check' ? 'text-good' : entry.icon === 'shield' ? 'text-primary' : 'text-muted'
+  const { icon: Icon, tone } = ACTIVITY_ICON_MAP[entry.icon]
   return (
     <div className="flex items-start justify-between gap-2.5">
       <div className="flex items-start gap-2.5 min-w-0">
-        <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${tone}`} strokeWidth={2} />
+        <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${TONE_CLASSES[tone].text}`} strokeWidth={2} />
         <div className="min-w-0">
           <p className="truncate text-[13px] font-semibold text-ink">{entry.action}</p>
           <p className="text-[11px] text-faint">{entry.actor}</p>

@@ -1,0 +1,115 @@
+.landing-scene {
+  position: relative;
+  width: min(100%, 700px);
+  height: 620px;
+  overflow: hidden;
+  border-radius: 24px;
+  background: radial-gradient(circle at 50% 46%, rgba(49, 57, 105, .42), transparent 40%), #05070d;
+  contain: layout paint;
+}
+
+.landing-scene canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  background: #05070d;
+}
+
+.landing-node-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 142px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--node-color) 58%, transparent);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(18, 27, 48, .92), rgba(7, 12, 23, .84));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .42), 0 0 20px color-mix(in srgb, var(--node-color) 22%, transparent), inset 0 1px rgba(255, 255, 255, .13);
+  color: #f4f6fb;
+  font: 700 10px/1.2 var(--font-mono);
+  letter-spacing: .08em;
+  transition: transform 280ms ease, box-shadow 280ms ease;
+  user-select: none;
+}
+
+.landing-node-card:hover {
+  transform: translateZ(14px) scale(1.05);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, .52), 0 0 30px color-mix(in srgb, var(--node-color) 42%, transparent), inset 0 1px rgba(255, 255, 255, .18);
+}
+
+.landing-node-card svg {
+  flex: 0 0 auto;
+  color: var(--node-color);
+  filter: drop-shadow(0 0 6px var(--node-color));
+}
+
+.landing-scene-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 300px;
+  padding: 24px;
+  border: 1px solid rgba(76, 215, 246, .35);
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(18, 27, 48, .9), rgba(5, 7, 13, .94));
+  color: #c7cede;
+  font: 700 10px/1.4 var(--font-mono);
+  letter-spacing: .08em;
+  text-align: center;
+}
+
+.landing-scene-fallback-3d { position: relative; min-height: 620px; overflow: hidden; perspective: 1100px; background: radial-gradient(circle at 50% 48%, rgba(66, 77, 145, .35), transparent 42%), #05070d; }
+.fallback-platform { position: absolute; left: 50%; bottom: 11%; width: 310px; height: 70px; transform: translateX(-50%) rotateX(64deg); border: 2px solid #4cd7f6; border-radius: 50%; background: rgba(20, 34, 64, .88); box-shadow: 0 0 24px rgba(76, 215, 246, .65), 0 30px 38px rgba(0, 0, 0, .72), inset 0 0 25px rgba(167, 139, 250, .5); }
+.fallback-platform::after { content: ''; position: absolute; inset: 14px 35px; border: 1px solid #a78bfa; border-radius: 50%; box-shadow: 0 0 14px #a78bfa; }
+.fallback-vault { position: absolute; left: 50%; top: 48%; width: 212px; height: 212px; transform: translate(-50%, -50%) rotateX(7deg) rotateY(var(--parallax-x, -13deg)); transform-style: preserve-3d; filter: drop-shadow(20px 28px 20px rgba(0,0,0,.62)); transition: transform 180ms ease-out; }
+.fallback-vault-front { position: absolute; inset: 0; z-index: 3; display: grid; place-content: center; border: 2px solid #4cd7f6; border-radius: 20px; background: linear-gradient(135deg, #273457, #0b1328 65%); box-shadow: inset 0 0 34px rgba(76, 215, 246, .16), 0 0 24px rgba(108, 99, 255, .62); text-align: center; }
+.fallback-vault-front::before { content: ''; position: absolute; inset: 13px; border: 1px solid rgba(76, 215, 246, .75); border-radius: 14px; }
+.fallback-vault-front::after { content: ''; position: absolute; inset: 25px; border: 1px solid rgba(167, 139, 250, .7); border-radius: 10px; }
+.fallback-vault-front span, .fallback-vault-front small { position: relative; z-index: 1; }
+.fallback-vault-front span { color: #eaffff; font: 700 54px/1 var(--font-display); text-shadow: 0 0 18px #4cd7f6; }
+.fallback-vault-front small { margin-top: 12px; color: #4cd7f6; font: 700 11px/1.55 var(--font-mono); letter-spacing: .17em; }
+.fallback-vault-side { position: absolute; z-index: 2; top: 16px; right: -42px; width: 42px; height: 196px; transform: skewY(-38deg); border: 2px solid #5b9cff; border-left: 0; border-radius: 0 14px 14px 0; background: linear-gradient(90deg, #101d3b, #050a17); box-shadow: inset -12px 0 18px rgba(91, 156, 255, .18); transform-origin: left center; }
+.fallback-vault-top { position: absolute; z-index: 1; top: -37px; left: 20px; width: 196px; height: 39px; transform: skewX(-48deg); border: 2px solid #a78bfa; border-bottom: 0; border-radius: 14px 14px 0 0; background: linear-gradient(135deg, #36426b, #111a35); transform-origin: bottom left; }
+.fallback-node { position: absolute; z-index: 5; display: flex; align-items: center; gap: 9px; padding: 12px 14px; border: 1px solid currentColor; border-radius: 11px; background: linear-gradient(135deg, rgba(27, 41, 73, .96), rgba(7, 13, 27, .94)); box-shadow: 0 13px 20px rgba(0,0,0,.52), 0 0 17px currentColor; font: 700 10px var(--font-mono); letter-spacing: .08em; white-space: nowrap; transition: transform 180ms ease-out; }
+.fallback-node b { font-size: 18px; }
+.fallback-node-university { left: 7%; top: 19%; color: #a78bfa; transform: translateY(calc(var(--parallax-y, 0deg) * -1)); }
+.fallback-node-student { left: 7%; bottom: 19%; color: #4cd7f6; transform: translateY(var(--parallax-y, 0deg)); }
+.fallback-node-employer { right: 7%; top: 21%; color: #5b9cff; transform: translateY(calc(var(--parallax-y, 0deg) * -1)); }
+.fallback-node-verified { right: 7%; bottom: 17%; color: #4edea3; transform: translateY(var(--parallax-y, 0deg)); }
+.fallback-connection { position: absolute; z-index: 4; height: 2px; width: 24%; transform-origin: left center; box-shadow: 0 0 9px currentColor; }
+.fallback-connection-tl { left: 24%; top: 35%; color: #a78bfa; transform: rotate(17deg); }
+.fallback-connection-bl { left: 24%; bottom: 35%; color: #4cd7f6; transform: rotate(-17deg); }
+.fallback-connection-tr { right: 24%; top: 36%; color: #5b9cff; transform: rotate(163deg); }
+.fallback-connection-br { right: 24%; bottom: 34%; color: #4edea3; transform: rotate(197deg); }
+.fallback-transcript { position: absolute; z-index: 7; right: 2%; bottom: 8%; display: grid; gap: 7px; width: 180px; padding: 14px; transform: translateZ(60px) rotateX(5deg) rotateY(-18deg) rotateZ(-8deg); border: 1px solid #4cd7f6; border-radius: 10px; background: linear-gradient(135deg, #1b3152, #091326); box-shadow: 9px 16px 0 #07101e, 0 0 22px rgba(76, 215, 246, .4); color: #aab4c8; font: 10px/1.35 var(--font-mono); text-align: left; }
+.fallback-transcript::after { content: ''; position: absolute; top: 8px; right: -10px; bottom: -8px; width: 10px; transform: skewY(-36deg); border-right: 1px solid #5b9cff; background: #0a172c; }
+.fallback-transcript strong { color: #4cd7f6; font-size: 9px; letter-spacing: .08em; }
+.fallback-transcript span { color: #f4f6fb; font: 600 13px var(--font-display); }
+.fallback-transcript i { position: absolute; right: 12px; bottom: 13px; color: #d9faff; font-size: 25px; font-style: normal; }
+
+@media (max-width: 1024px) {
+  .landing-scene { height: 500px; }
+}
+
+@media (max-width: 640px) {
+  .landing-scene { height: 390px; margin: -12px auto 0; }
+  .landing-node-card { width: 116px; padding: 9px 10px; font-size: 8px; gap: 7px; }
+  .landing-scene-fallback { min-height: 220px; flex-wrap: wrap; }
+  .landing-scene-fallback-3d { min-height: 390px; }
+  .fallback-vault { width: 142px; height: 142px; }
+  .fallback-vault-side { top: 11px; right: -27px; width: 27px; height: 131px; }
+  .fallback-vault-top { top: -25px; left: 13px; width: 132px; height: 27px; }
+  .fallback-vault-front span { font-size: 36px; }
+  .fallback-vault-front small { margin-top: 7px; font-size: 8px; }
+  .fallback-platform { width: 220px; height: 50px; }
+  .fallback-node { padding: 8px; font-size: 7px; gap: 5px; }
+  .fallback-node b { font-size: 13px; }
+  .fallback-transcript { width: 132px; padding: 9px; font-size: 8px; }
+  .fallback-transcript span { font-size: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-node-card { transition: none; }
+}

@@ -15,7 +15,6 @@
 import base64
 import hmac
 import uuid
-from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -114,26 +113,35 @@ def check_document_integrity(credential: Credential) -> bool:
     Re-reads the actual document bytes from private storage and compares a
     freshly-computed SHA-256 against credential.document_hash, using a
     constant-time comparison. This catches a DIFFERENT tamper vector than
-    check_signature: someone replacing/corrupting the file on disk directly,
-    without touching the database row at all (document_hash itself is part
-    of the signed payload, so a change to the DB column is instead caught by
-    check_signature — this function is specifically about the file's actual
-    bytes vs. what the database and signature both claim they hash to).
+    check_signature: someone replacing/corrupting the file in storage
+    directly, without touching the database row at all (document_hash itself
+    is part of the signed payload, so a change to the DB column is instead
+    caught by check_signature — this function is specifically about the
+    file's actual bytes vs. what the database and signature both claim they
+    hash to).
 
     A credential with no document on file has nothing to contradict, so
     there's nothing to fail here (True) — Phase 4's issuance flow always
     attaches a document, so this is a defensive default for a case the
     current system can't actually produce, not an exploitable gap.
+
+    Deliberately does NOT catch document_service.StorageUnavailableError —
+    that means the storage backend itself couldn't be reached/queried, which
+    is not evidence the document is missing or tampered. It propagates
+    through verify_credential to the /verify route, which maps it to a
+    distinct "try again" response rather than ever reaching this function's
+    normal True/False result (see routes/verification.py) — a temporary
+    Supabase outage must never make an otherwise correctly signed credential
+    report INVALID.
     """
     document = credential.document
     if document is None or credential.document_hash is None:
         return True
 
-    path = Path(document.storage_path)
-    if not path.exists():
+    if not document_service.document_exists(document.storage_path):
         return False
 
-    actual_hash = document_service.compute_sha256(path.read_bytes())
+    actual_hash = document_service.compute_sha256(document_service.read_document(document.storage_path))
     return hmac.compare_digest(actual_hash, credential.document_hash)
 
 

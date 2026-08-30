@@ -50,19 +50,21 @@ STUDENT_PAYLOAD = {
     "role": "student",
     "student_identifier": "TEST-STU-001",
 }
+# institution_id/company_id are filled in per-test (a real directory row must exist first —
+# see test_institution_role_authorization/test_verifier_role_authorization below), since
+# registration now claims an existing canonical directory record rather than creating one
+# from a typed name.
 INSTITUTION_PAYLOAD = {
     "email": "institution1@test.credchain.dev",
     "password": "Password123",
     "full_name": "Test Institution Admin",
     "role": "institution",
-    "institution_name": "Test University",
 }
 VERIFIER_PAYLOAD = {
     "email": "verifier1@test.credchain.dev",
     "password": "Password123",
     "full_name": "Test Verifier",
     "role": "verifier",
-    "company_name": "Test Company",
 }
 
 
@@ -160,8 +162,15 @@ def test_student_role_authorization(client):
     assert client.get("/api/_test/verifier-only", headers=_auth_header(token)).status_code == 403
 
 
-def test_institution_role_authorization(client):
-    reg = client.post("/api/auth/register", json=INSTITUTION_PAYLOAD)
+def test_institution_role_authorization(client, db_session):
+    from app.models.institution import Institution
+
+    institution = Institution(name="Test University")
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
+
+    reg = client.post("/api/auth/register", json={**INSTITUTION_PAYLOAD, "institution_id": str(institution.id)})
     token = reg.json()["access_token"]
 
     assert client.get("/api/_test/institution-only", headers=_auth_header(token)).status_code == 200
@@ -169,8 +178,15 @@ def test_institution_role_authorization(client):
     assert client.get("/api/_test/verifier-only", headers=_auth_header(token)).status_code == 403
 
 
-def test_verifier_role_authorization(client):
-    reg = client.post("/api/auth/register", json=VERIFIER_PAYLOAD)
+def test_verifier_role_authorization(client, db_session):
+    from app.models.company import Company
+
+    company = Company(name="Test Company")
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
+
+    reg = client.post("/api/auth/register", json={**VERIFIER_PAYLOAD, "company_id": str(company.id)})
     token = reg.json()["access_token"]
 
     assert client.get("/api/_test/verifier-only", headers=_auth_header(token)).status_code == 200

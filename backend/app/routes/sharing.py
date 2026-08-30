@@ -1,12 +1,20 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models.user import User
 from ..config import settings
-from ..schemas.sharing import CreateDirectShareBody, ShareCreatedResponse, ShareGrantResponse, ShareTokenAccessResponse
+from ..schemas.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page
+from ..schemas.sharing import (
+    SHARED_CREDENTIAL_STATUS_FILTERS,
+    CreateDirectShareBody,
+    ShareCreatedResponse,
+    ShareGrantResponse,
+    SharedCredentialItem,
+    ShareTokenAccessResponse,
+)
 from ..security.permissions import require_student, require_verifier
 from ..services import sharing_service
 
@@ -91,6 +99,11 @@ def create_direct_share(
         )
     except sharing_service.CompanyNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+    except sharing_service.CompanyNotRegisteredError:
+        raise HTTPException(
+            status_code=422,
+            detail="This company is a directory listing only and has no CredChain account to receive a share. Choose a registered company instead.",
+        )
     except sharing_service.InvalidExpiryError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except sharing_service.CredentialSelectionError as exc:
@@ -117,3 +130,31 @@ def list_my_shares_as_company(
     if current_user.company is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No company profile for this account")
     return [sharing_service.to_share_grant_response(g) for g in sharing_service.list_shares_for_company(db, current_user.company)]
+
+
+@me_router.get(
+    "/api/companies/me/shared-credentials",
+    response_model=Page[SharedCredentialItem],
+    summary=(
+        "The company's paginated, searchable 'Credentials Shared With You' inbox — one row per "
+        "(share, credential), scoped to this company's own canonical company_id only. Never "
+        "loads more than one page; never includes another company's shares."
+    ),
+)
+def list_my_shared_credentials(
+    search: str | None = Query(default=None, description="Matches student name, credential title/type, or institution name"),
+    status_filter: str | None = Query(default=None, alias="status", description=f"One of {SHARED_CREDENTIAL_STATUS_FILTERS}"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    current_user: User = Depends(require_verifier),
+    db: Session = Depends(get_db),
+) -> Page[SharedCredentialItem]:
+    if current_user.company is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No company profile for this account")
+    try:
+        items, total = sharing_service.list_shared_credentials_for_company(
+            db, current_user.company, search=search, status=status_filter, page=page, page_size=page_size
+        )
+    except sharing_service.InvalidSharedCredentialStatusFilterError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return sharing_service.to_shared_credentials_page_response(items, total=total, page=page, page_size=page_size)

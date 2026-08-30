@@ -19,7 +19,7 @@ from ..schemas.student_document import StudentDocumentResponse
 from ..security.permissions import require_student
 from ..services import institution_request_service, job_application_service, sharing_service, student_document_service, student_service
 from ..services.credential_service import to_credential_response
-from ..services.document_service import DocumentTooLargeError, EmptyDocumentError, UnsupportedDocumentTypeError
+from ..services.document_service import DocumentTooLargeError, EmptyDocumentError, StorageUnavailableError, UnsupportedDocumentTypeError
 
 router = APIRouter(prefix="/api/students", tags=["students"])
 
@@ -185,6 +185,11 @@ async def upload_document(
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc))
     except DocumentTooLargeError as exc:
         raise HTTPException(status_code=413, detail=str(exc))
+    except StorageUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document storage is temporarily unavailable. Please try again shortly.",
+        )
 
     return student_document_service.to_response(record)
 
@@ -228,7 +233,7 @@ def apply_to_job(
     except sharing_service.CredentialSelectionError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    return job_application_service.to_student_response(application)
+    return job_application_service.to_student_response(db, application)
 
 
 @router.get(
@@ -240,7 +245,7 @@ def list_my_applications(current_user: User = Depends(require_student), db: Sess
     if current_user.student is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No student profile for this account")
     applications = job_application_service.list_for_student(db, current_user.student)
-    return [job_application_service.to_student_response(a) for a in applications]
+    return [job_application_service.to_student_response(db, a) for a in applications]
 
 
 @router.post(
@@ -261,4 +266,4 @@ def withdraw_application(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This application does not belong to you")
     except job_application_service.WithdrawalNotAllowedError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This application can no longer be withdrawn")
-    return job_application_service.to_student_response(application)
+    return job_application_service.to_student_response(db, application)

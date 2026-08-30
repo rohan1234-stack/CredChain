@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Users, ShieldCheck } from 'lucide-react'
 import { getStudents } from '../../lib/api'
+import { ApiError } from '../../lib/apiClient'
 import { PageHeader, Card, EmptyState, SearchInput } from '../../components/ui'
 import { SkeletonCard } from '../../components/ui/Skeleton'
 import { InitialsAvatar } from '../../components/ui/IconTile'
@@ -21,10 +22,12 @@ export function Students() {
   const [students, setStudents] = useState<{ id: string; name: string; initials: string; credentialCount: number }[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     getStudents()
       .then(setStudents)
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Unable to load students. Please try again.'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -36,6 +39,8 @@ export function Students() {
     <div>
       <PageHeader title="Students" eyebrow="Student Directory" icon={Users} description="Manage verified student records affiliated with your institution." />
 
+      {error && <div className="mb-4 max-w-2xl rounded-lg bg-bad-bg px-3.5 py-2.5 text-[13px] text-bad">{error}</div>}
+
       {students.length > 0 && (
         <div className="mb-5 max-w-2xl">
           <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name…" />
@@ -43,11 +48,13 @@ export function Students() {
       )}
 
       {students.length === 0 ? (
-        <EmptyState
-          icon={Users}
-          title="No students yet"
-          description="No students are currently linked to this institution."
-        />
+        !error && (
+          <EmptyState
+            icon={Users}
+            title="No students yet"
+            description="No students are currently linked to this institution."
+          />
+        )
       ) : filtered.length === 0 ? (
         <EmptyState icon={Users} title="No matching students" description="Try a different search term." />
       ) : (

@@ -1,8 +1,6 @@
 import uuid
-from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -10,7 +8,9 @@ from ..models.credential import Credential
 from ..models.user import User
 from ..schemas.verification import VerifyRequest, VerifyResponse
 from ..security.permissions import require_verifier
-from ..services import authorization_service, verification_service
+from ..services import authorization_service, document_service, verification_service
+
+_STORAGE_UNAVAILABLE_DETAIL = "Document storage is temporarily unavailable. Please try again shortly."
 
 router = APIRouter(prefix="/api/verification", tags=["verification"])
 
@@ -35,12 +35,18 @@ def verify(
     if current_user.company is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No company profile for this account")
 
-    result = verification_service.verify_credential(
-        db,
-        current_user.company,
-        payload.credential_id,
-        demo_cgpa_override=payload.demo_cgpa_override,
-    )
+    try:
+        result = verification_service.verify_credential(
+            db,
+            current_user.company,
+            payload.credential_id,
+            demo_cgpa_override=payload.demo_cgpa_override,
+        )
+    except document_service.StorageUnavailableError:
+        # A temporary storage-backend outage while re-reading the document for the integrity
+        # check — explicitly NOT the same thing as the document being missing or tampered, so
+        # this must never be allowed to surface as (or be confused with) an INVALID result.
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_STORAGE_UNAVAILABLE_DETAIL)
     return VerifyResponse(**result)
 
 
@@ -52,7 +58,7 @@ def view_shared_document(
     credential_id: uuid.UUID,
     current_user: User = Depends(require_verifier),
     db: Session = Depends(get_db),
-) -> FileResponse:
+) -> Response:
     if current_user.company is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No company profile for this account")
 
@@ -63,11 +69,16 @@ def view_shared_document(
     if credential.document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No document on file for this credential")
 
-    path = Path(credential.document.storage_path)
-    if not path.exists():
+    try:
+        exists = document_service.document_exists(credential.document.storage_path)
+    except document_service.StorageUnavailableError:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_STORAGE_UNAVAILABLE_DETAIL)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file is missing on this server")
-    # No filename passed -> Starlette emits no Content-Disposition header at all, so the browser renders it inline by default.
-    return FileResponse(path, media_type=credential.document.mime_type)
+
+    data = document_service.read_document(credential.document.storage_path)
+    # No Content-Disposition header -> the browser renders it inline by default.
+    return Response(content=data, media_type=credential.document.mime_type)
 
 
 @router.get(
@@ -78,7 +89,7 @@ def download_shared_document(
     credential_id: uuid.UUID,
     current_user: User = Depends(require_verifier),
     db: Session = Depends(get_db),
-) -> FileResponse:
+) -> Response:
     if current_user.company is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No company profile for this account")
 
@@ -90,11 +101,16 @@ def download_shared_document(
     if credential.document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No document on file for this credential")
 
-    path = Path(credential.document.storage_path)
-    if not path.exists():
+    try:
+        exists = document_service.document_exists(credential.document.storage_path)
+    except document_service.StorageUnavailableError:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_STORAGE_UNAVAILABLE_DETAIL)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file is missing on this server")
-    return FileResponse(
-        path,
+
+    data = document_service.read_document(credential.document.storage_path)
+    return Response(
+        content=data,
         media_type=credential.document.mime_type,
-        filename=f"{credential.credential_identifier}.pdf",
+        headers={"Content-Disposition": f'attachment; filename="{credential.credential_identifier}.pdf"'},
     )

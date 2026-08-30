@@ -9,19 +9,31 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_verifier(client, email, name):
+def _register_verifier(client, db_session, email, name):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Job Verifier", "role": "verifier", "company_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Job Verifier", "role": "verifier", "company_id": str(company.id)},
     )
     body = resp.json()
     return {"token": body["access_token"], "company_id": body["user"]["company_id"]}
 
 
-def _register_institution(client, email, name):
+def _register_institution(client, db_session, email, name):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Job Inst", "role": "institution", "institution_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Job Inst", "role": "institution", "institution_id": str(institution.id)},
     )
     body = resp.json()
     return {"token": body["access_token"], "institution_id": body["user"]["institution_id"]}
@@ -59,7 +71,7 @@ def _job_payload(**overrides):
 
 
 def test_company_can_create_publish_edit_close_job(client, db_session):
-    verifier = _register_verifier(client, "job-co-1@test.credchain.dev", "Job Co 1")
+    verifier = _register_verifier(client, db_session, "job-co-1@test.credchain.dev", "Job Co 1")
 
     create_resp = client.post("/api/companies/me/jobs", json=_job_payload(), headers=_auth_header(verifier["token"]))
     assert create_resp.status_code == 201, create_resp.text
@@ -84,8 +96,8 @@ def test_company_can_create_publish_edit_close_job(client, db_session):
 
 
 def test_company_cannot_modify_another_companys_job(client, db_session):
-    verifier_a = _register_verifier(client, "job-co-a@test.credchain.dev", "Job Co A")
-    verifier_b = _register_verifier(client, "job-co-b@test.credchain.dev", "Job Co B")
+    verifier_a = _register_verifier(client, db_session, "job-co-a@test.credchain.dev", "Job Co A")
+    verifier_b = _register_verifier(client, db_session, "job-co-b@test.credchain.dev", "Job Co B")
 
     job = client.post("/api/companies/me/jobs", json=_job_payload(), headers=_auth_header(verifier_a["token"])).json()
 
@@ -96,8 +108,8 @@ def test_company_cannot_modify_another_companys_job(client, db_session):
 
 
 def test_student_only_sees_open_jobs_never_draft_or_default_company(client, db_session):
-    verifier = _register_verifier(client, "job-co-2@test.credchain.dev", "Job Co 2")
-    inst = _register_institution(client, "job-inst-2@test.credchain.dev", "Job University 2")
+    verifier = _register_verifier(client, db_session, "job-co-2@test.credchain.dev", "Job Co 2")
+    inst = _register_institution(client, db_session, "job-inst-2@test.credchain.dev", "Job University 2")
     student = _register_student(client, inst["institution_id"], "job-stu-2@test.credchain.dev", "JOB-STU-2")
 
     draft_job = client.post("/api/companies/me/jobs", json=_job_payload(title="Draft Job"), headers=_auth_header(verifier["token"])).json()
@@ -106,10 +118,11 @@ def test_student_only_sees_open_jobs_never_draft_or_default_company(client, db_s
 
     list_resp = client.get("/api/jobs", headers=_auth_header(student["token"]))
     assert list_resp.status_code == 200
-    titles = [j["title"] for j in list_resp.json()]
+    page = list_resp.json()
+    titles = [j["title"] for j in page["items"]]
     assert "Open Job" in titles
     assert "Draft Job" not in titles
-    for j in list_resp.json():
+    for j in page["items"]:
         assert j["company_name"] != "ABC Technologies"
 
     detail_resp = client.get(f"/api/jobs/{draft_job['id']}", headers=_auth_header(student["token"]))
@@ -117,16 +130,18 @@ def test_student_only_sees_open_jobs_never_draft_or_default_company(client, db_s
 
 
 def test_no_jobs_is_an_honest_empty_list(client, db_session):
-    inst = _register_institution(client, "job-inst-empty@test.credchain.dev", "Job University Empty")
+    inst = _register_institution(client, db_session, "job-inst-empty@test.credchain.dev", "Job University Empty")
     student = _register_student(client, inst["institution_id"], "job-stu-empty@test.credchain.dev", "JOB-STU-EMPTY")
     resp = client.get("/api/jobs", headers=_auth_header(student["token"]))
     assert resp.status_code == 200
-    assert isinstance(resp.json(), list)
+    page = resp.json()
+    assert page["items"] == []
+    assert page["total"] == 0
 
 
 def test_eligibility_deterministic_mandatory_gate(client, db_session):
-    verifier = _register_verifier(client, "job-co-3@test.credchain.dev", "Job Co 3")
-    inst = _register_institution(client, "job-inst-3@test.credchain.dev", "Job University 3")
+    verifier = _register_verifier(client, db_session, "job-co-3@test.credchain.dev", "Job Co 3")
+    inst = _register_institution(client, db_session, "job-inst-3@test.credchain.dev", "Job University 3")
     student = _register_student(client, inst["institution_id"], "job-stu-3@test.credchain.dev", "JOB-STU-3")
 
     job = client.post(
@@ -163,8 +178,8 @@ def test_eligibility_deterministic_mandatory_gate(client, db_session):
 
 
 def test_eligibility_low_cgpa_fails_mandatory_gate(client, db_session):
-    verifier = _register_verifier(client, "job-co-4@test.credchain.dev", "Job Co 4")
-    inst = _register_institution(client, "job-inst-4@test.credchain.dev", "Job University 4")
+    verifier = _register_verifier(client, db_session, "job-co-4@test.credchain.dev", "Job Co 4")
+    inst = _register_institution(client, db_session, "job-inst-4@test.credchain.dev", "Job University 4")
     student = _register_student(client, inst["institution_id"], "job-stu-4@test.credchain.dev", "JOB-STU-4")
 
     job = client.post(
@@ -186,8 +201,8 @@ def test_eligibility_low_cgpa_fails_mandatory_gate(client, db_session):
 
 
 def test_eligibility_skills_are_advisory_not_blocking(client, db_session):
-    verifier = _register_verifier(client, "job-co-5@test.credchain.dev", "Job Co 5")
-    inst = _register_institution(client, "job-inst-5@test.credchain.dev", "Job University 5")
+    verifier = _register_verifier(client, db_session, "job-co-5@test.credchain.dev", "Job Co 5")
+    inst = _register_institution(client, db_session, "job-inst-5@test.credchain.dev", "Job University 5")
     student = _register_student(client, inst["institution_id"], "job-stu-5@test.credchain.dev", "JOB-STU-5")
 
     job = client.post(

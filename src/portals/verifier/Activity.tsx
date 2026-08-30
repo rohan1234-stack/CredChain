@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Shield, Mail, Check, Activity as ActivityIcon } from 'lucide-react'
+import { Activity as ActivityIcon } from 'lucide-react'
 import { getVerifierActivity } from '../../lib/api'
 import { ApiError } from '../../lib/apiClient'
 import type { AccessLogEntry } from '../../types'
 import { PageHeader, Card, EmptyState, ErrorState, Timeline, TimelineItem, FilterPills } from '../../components/ui'
 import { SkeletonCard } from '../../components/ui/Skeleton'
-
-const LOG_ICON = { shield: Shield, mail: Mail, check: Check }
-const LOG_TONE = { shield: 'primary', mail: 'neutral', check: 'good' } as const
+import { ACTIVITY_ICON_MAP, ACTIVITY_FILTER_OPTIONS } from '../../lib/utils'
 
 /**
  * Reproduces Stitch's "activity_log" screen: a filterable connected audit
@@ -18,16 +16,13 @@ const LOG_TONE = { shield: 'primary', mail: 'neutral', check: 'good' } as const
  * those boxes are simply omitted rather than fabricated — every title/actor/
  * timestamp below is the real AccessLogEntry already returned by
  * getVerifierActivity. Filtering is a client-side-only presentational
- * addition (Stitch's own "All Events/Issued/Verified/Shared" pattern) over
- * the same already-fetched `log` array — no new API call.
+ * addition over the same already-fetched `log` array — no new API call.
+ * Filters by the event's real category (shared with the student/institution
+ * Activity pages) rather than its icon — filtering by icon previously meant
+ * e.g. job-application events landed under the "Requests" pill instead of
+ * their own category.
  */
-type Filter = 'all' | 'shield' | 'mail' | 'check'
-const FILTER_OPTIONS: { value: Filter; label: string }[] = [
-  { value: 'all', label: 'All Events' },
-  { value: 'check', label: 'Verified' },
-  { value: 'shield', label: 'Requests' },
-  { value: 'mail', label: 'Shared' },
-]
+type Filter = AccessLogEntry['category'] | 'all'
 
 export function VerifierActivity() {
   const [log, setLog] = useState<AccessLogEntry[]>([])
@@ -42,11 +37,11 @@ export function VerifierActivity() {
       .finally(() => setLoading(false))
   }, [])
 
-  const filtered = useMemo(() => (filter === 'all' ? log : log.filter((e) => e.icon === filter)), [log, filter])
+  const filtered = useMemo(() => (filter === 'all' ? log : log.filter((e) => e.category === filter)), [log, filter])
 
   return (
     <div>
-      <PageHeader title="Activity" eyebrow="Audit Trail" icon={ActivityIcon} description="A record of verification checks and credential requests." />
+      <PageHeader title="Activity" eyebrow="Audit Trail" icon={ActivityIcon} description="A record of verification checks, credential requests, and job applications." />
       {error && <div className="mb-5 max-w-2xl"><ErrorState description={error} onRetry={() => window.location.reload()} /></div>}
       {loading ? (
         <div className="max-w-2xl"><SkeletonCard lines={4} /></div>
@@ -55,7 +50,7 @@ export function VerifierActivity() {
       ) : (
         <div className="max-w-2xl">
           <div className="mb-4">
-            <FilterPills options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
+            <FilterPills options={ACTIVITY_FILTER_OPTIONS} value={filter} onChange={setFilter} />
           </div>
           {filtered.length === 0 ? (
             <EmptyState icon={ActivityIcon} title="No matching events" description="Try a different filter." />
@@ -65,8 +60,8 @@ export function VerifierActivity() {
                 {filtered.map((entry, i) => (
                   <TimelineItem
                     key={entry.id}
-                    icon={LOG_ICON[entry.icon]}
-                    tone={LOG_TONE[entry.icon]}
+                    icon={ACTIVITY_ICON_MAP[entry.icon].icon}
+                    tone={ACTIVITY_ICON_MAP[entry.icon].tone}
                     title={entry.action}
                     subtitle={entry.actor}
                     timestamp={entry.timestamp}

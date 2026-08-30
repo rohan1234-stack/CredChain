@@ -23,10 +23,16 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_institution(client, email, name):
+def _register_institution(client, db_session, email, name):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "DocView Inst", "role": "institution", "institution_name": name},
+        json={"email": email, "password": "Password123", "full_name": "DocView Inst", "role": "institution", "institution_id": str(institution.id)},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
@@ -50,10 +56,16 @@ def _register_student(client, institution_id, email, identifier):
     return {"token": body["access_token"], "student_id": body["user"]["student_id"]}
 
 
-def _register_verifier(client, email, name):
+def _register_verifier(client, db_session, email, name):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "DocView Verifier", "role": "verifier", "company_name": name},
+        json={"email": email, "password": "Password123", "full_name": "DocView Verifier", "role": "verifier", "company_id": str(company.id)},
     )
     assert resp.status_code == 201, resp.text
     return {"token": resp.json()["access_token"]}
@@ -86,17 +98,17 @@ def _request_and_share(client, verifier_token, student_token, student_identifier
     return resp.json()
 
 
-def _setup(client, suffix, permission="view_only"):
-    inst = _register_institution(client, f"docview-inst-{suffix}@test.credchain.dev", f"DocView University {suffix}")
+def _setup(client, db_session, suffix, permission="view_only"):
+    inst = _register_institution(client, db_session, f"docview-inst-{suffix}@test.credchain.dev", f"DocView University {suffix}")
     student = _register_student(client, inst["institution_id"], f"docview-stu-{suffix}@test.credchain.dev", f"DOCVIEW-STU-{suffix}")
-    verifier = _register_verifier(client, f"docview-co-{suffix}@test.credchain.dev", f"DocView Co {suffix}")
+    verifier = _register_verifier(client, db_session, f"docview-co-{suffix}@test.credchain.dev", f"DocView Co {suffix}")
     credential_id = _issue(client, inst["token"], student["student_id"])
     _request_and_share(client, verifier["token"], student["token"], f"DOCVIEW-STU-{suffix}", credential_id, permission=permission)
     return {"inst": inst, "student": student, "verifier": verifier, "credential_id": credential_id}
 
 
 def test_view_endpoint_returns_real_pdf_content_type(client, db_session):
-    ctx = _setup(client, "1a")
+    ctx = _setup(client, db_session, "1a")
     resp = client.get(f"/api/verification/credentials/{ctx['credential_id']}/view", headers=_auth_header(ctx["verifier"]["token"]))
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/pdf"
@@ -104,14 +116,14 @@ def test_view_endpoint_returns_real_pdf_content_type(client, db_session):
 
 def test_view_endpoint_returns_exact_stored_bytes(client, db_session):
     """The core anti-fake-document guarantee: the response body is byte-for-byte identical to what the institution actually uploaded."""
-    ctx = _setup(client, "1b")
+    ctx = _setup(client, db_session, "1b")
     resp = client.get(f"/api/verification/credentials/{ctx['credential_id']}/view", headers=_auth_header(ctx["verifier"]["token"]))
     assert resp.status_code == 200
     assert resp.content == SAMPLE_PDF_BYTES
 
 
 def test_download_endpoint_returns_exact_stored_bytes(client, db_session):
-    ctx = _setup(client, "1c", permission="view_download")
+    ctx = _setup(client, db_session, "1c", permission="view_download")
     resp = client.get(f"/api/verification/credentials/{ctx['credential_id']}/download", headers=_auth_header(ctx["verifier"]["token"]))
     assert resp.status_code == 200
     assert resp.content == SAMPLE_PDF_BYTES
@@ -120,14 +132,14 @@ def test_download_endpoint_returns_exact_stored_bytes(client, db_session):
 
 def test_download_endpoint_sets_attachment_disposition(client, db_session):
     """View is inline (no Content-Disposition); download is a real attachment — the frontend distinguishes the two by calling different endpoints, not by guessing."""
-    ctx = _setup(client, "1d", permission="view_download")
+    ctx = _setup(client, db_session, "1d", permission="view_download")
     resp = client.get(f"/api/verification/credentials/{ctx['credential_id']}/download", headers=_auth_header(ctx["verifier"]["token"]))
     assert resp.status_code == 200
     assert "attachment" in resp.headers.get("content-disposition", "").lower()
 
 
 def test_view_endpoint_has_no_content_disposition(client, db_session):
-    ctx = _setup(client, "1e")
+    ctx = _setup(client, db_session, "1e")
     resp = client.get(f"/api/verification/credentials/{ctx['credential_id']}/view", headers=_auth_header(ctx["verifier"]["token"]))
     assert resp.status_code == 200
     assert "content-disposition" not in {k.lower() for k in resp.headers.keys()}
@@ -135,14 +147,14 @@ def test_view_endpoint_has_no_content_disposition(client, db_session):
 
 def test_a_different_companys_share_does_not_grant_view(client, db_session):
     """Explicit 'another company's share' case: Company B was never shared with — not even indirectly via Company A's grant."""
-    ctx = _setup(client, "1f")
-    other_company = _register_verifier(client, "docview-co-other-1f@test.credchain.dev", "DocView Co Other 1f")
+    ctx = _setup(client, db_session, "1f")
+    other_company = _register_verifier(client, db_session, "docview-co-other-1f@test.credchain.dev", "DocView Co Other 1f")
 
     resp = client.get(f"/api/verification/credentials/{ctx['credential_id']}/view", headers=_auth_header(other_company["token"]))
     assert resp.status_code == 403
 
 
 def test_view_requires_authentication(client, db_session):
-    ctx = _setup(client, "1g")
+    ctx = _setup(client, db_session, "1g")
     resp = client.get(f"/api/verification/credentials/{ctx['credential_id']}/view")
     assert resp.status_code == 401

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Briefcase, Plus, X, Pencil, MapPin, Clock3, CalendarClock, GraduationCap } from 'lucide-react'
+import { Briefcase, Plus, X, Pencil, MapPin, Clock3, CalendarClock, GraduationCap, ShieldAlert } from 'lucide-react'
 import { getMyJobs, createJob, updateJob, publishJob, closeJob } from '../../lib/api'
 import { ApiError } from '../../lib/apiClient'
+import { useAuth } from '../../context/AuthContext'
 import type { Job, JobEmploymentType, JobStatus } from '../../types'
 import { PageHeader, Card, Button, Badge, EmptyState, Field } from '../../components/ui'
 import { Input, Select, Textarea } from '../../components/ui/Input'
@@ -39,6 +40,8 @@ function csv(s: string): string[] {
 }
 
 export function Jobs() {
+  const { user } = useAuth()
+  const isVerified = user?.company_verification_status === 'verified'
   const [jobs, setJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -62,7 +65,9 @@ export function Jobs() {
   }
 
   useEffect(() => {
-    refresh().finally(() => setLoading(false))
+    refresh()
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Unable to load jobs. Please try again.'))
+      .finally(() => setLoading(false))
   }, [])
 
   function resetForm() {
@@ -171,6 +176,32 @@ export function Jobs() {
         }
       />
 
+      {error && !showForm && <div className="mb-5 rounded-lg bg-bad-bg px-3.5 py-2.5 text-[13px] text-bad">{error}</div>}
+
+      {user?.company_verification_status === 'pending' && (
+        <div className="mb-5 flex items-start gap-3 rounded-xl border border-warn-line bg-warn-bg px-4 py-3.5 text-warn">
+          <Clock3 className="mt-0.5 h-5 w-5 shrink-0" strokeWidth={2} />
+          <div>
+            <p className="text-sm font-semibold">Pending verification</p>
+            <p className="text-[13px] leading-relaxed">
+              Your company account is awaiting review by a CredChain administrator. You can create and edit draft jobs, but publishing is disabled
+              until your account is approved.
+            </p>
+          </div>
+        </div>
+      )}
+      {user?.company_verification_status === 'rejected' && (
+        <div className="mb-5 flex items-start gap-3 rounded-xl border border-bad-line bg-bad-bg px-4 py-3.5 text-bad">
+          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" strokeWidth={2} />
+          <div>
+            <p className="text-sm font-semibold">Verification rejected</p>
+            <p className="text-[13px] leading-relaxed">
+              {user.company_rejection_reason || 'Your company account was not approved.'} Jobs cannot be published.
+            </p>
+          </div>
+        </div>
+      )}
+
       {showForm && (
         <Card className="mb-6 p-6">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -227,7 +258,7 @@ export function Jobs() {
       )}
 
       {jobs.length === 0 && !showForm ? (
-        <EmptyState icon={Briefcase} title="No jobs yet" description="Create a job posting to get started." />
+        !error && <EmptyState icon={Briefcase} title="No jobs yet" description="Create a job posting to get started." />
       ) : (
         <div className="space-y-4">
           {jobs.map((j) => (
@@ -285,7 +316,7 @@ export function Jobs() {
                   </Button>
                 )}
                 {j.status === 'draft' && (
-                  <Button variant="solid" size="sm" onClick={() => handlePublish(j.id)}>
+                  <Button variant="solid" size="sm" disabled={!isVerified} title={isVerified ? undefined : 'Your company account must be verified before publishing jobs'} onClick={() => handlePublish(j.id)}>
                     Publish
                   </Button>
                 )}

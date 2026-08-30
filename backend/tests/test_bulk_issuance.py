@@ -18,7 +18,13 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_institution(client, email="bulk-inst@test.credchain.dev", name="Bulk University"):
+def _register_institution(client, db_session, email="bulk-inst@test.credchain.dev", name="Bulk University"):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
         json={
@@ -26,7 +32,7 @@ def _register_institution(client, email="bulk-inst@test.credchain.dev", name="Bu
             "password": "Password123",
             "full_name": "Bulk Inst Admin",
             "role": "institution",
-            "institution_name": name,
+            "institution_id": str(institution.id),
         },
     )
     assert resp.status_code == 201, resp.text
@@ -62,7 +68,7 @@ def _bulk_issue(client, token, student_ids, documents, **overrides):
 
 
 def test_bulk_issuance_all_succeed_each_credential_independent(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     s1 = _register_student(client, inst["institution_id"], "bulk-s1@test.credchain.dev", "BULK-S1")
     s2 = _register_student(client, inst["institution_id"], "bulk-s2@test.credchain.dev", "BULK-S2")
 
@@ -90,8 +96,8 @@ def test_bulk_issuance_all_succeed_each_credential_independent(client, db_sessio
 
 
 def test_bulk_issuance_partial_failure_does_not_abort_batch(client, db_session):
-    inst_a = _register_institution(client, email="bulk-inst-a@test.credchain.dev", name="Bulk University A")
-    inst_b = _register_institution(client, email="bulk-inst-b@test.credchain.dev", name="Bulk University B")
+    inst_a = _register_institution(client, db_session, email="bulk-inst-a@test.credchain.dev", name="Bulk University A")
+    inst_b = _register_institution(client, db_session, email="bulk-inst-b@test.credchain.dev", name="Bulk University B")
     good_student = _register_student(client, inst_a["institution_id"], "bulk-good@test.credchain.dev", "BULK-GOOD")
     # This student belongs to institution B, not A — issuing to them from A must fail for THIS item only.
     other_students_student = _register_student(client, inst_b["institution_id"], "bulk-wrong@test.credchain.dev", "BULK-WRONG")
@@ -116,7 +122,7 @@ def test_bulk_issuance_partial_failure_does_not_abort_batch(client, db_session):
 
 
 def test_bulk_issuance_bad_document_reported_per_item(client, db_session):
-    inst = _register_institution(client, email="bulk-inst-baddoc@test.credchain.dev", name="Bulk Baddoc University")
+    inst = _register_institution(client, db_session, email="bulk-inst-baddoc@test.credchain.dev", name="Bulk Baddoc University")
     s1 = _register_student(client, inst["institution_id"], "bulk-baddoc-1@test.credchain.dev", "BULK-BADDOC-1")
     s2 = _register_student(client, inst["institution_id"], "bulk-baddoc-2@test.credchain.dev", "BULK-BADDOC-2")
 
@@ -134,7 +140,7 @@ def test_bulk_issuance_bad_document_reported_per_item(client, db_session):
 
 
 def test_bulk_issuance_requires_matching_student_and_document_counts(client, db_session):
-    inst = _register_institution(client, email="bulk-inst-mismatch@test.credchain.dev", name="Bulk Mismatch University")
+    inst = _register_institution(client, db_session, email="bulk-inst-mismatch@test.credchain.dev", name="Bulk Mismatch University")
     s1 = _register_student(client, inst["institution_id"], "bulk-mismatch-1@test.credchain.dev", "BULK-MISMATCH-1")
 
     resp = _bulk_issue(client, inst["token"], [s1], [("a.pdf", SAMPLE_PDF_A), ("b.pdf", SAMPLE_PDF_B)])
@@ -142,7 +148,7 @@ def test_bulk_issuance_requires_matching_student_and_document_counts(client, db_
 
 
 def test_bulk_issuance_requires_institution_role(client, db_session):
-    inst = _register_institution(client, email="bulk-inst-role@test.credchain.dev", name="Bulk Role University")
+    inst = _register_institution(client, db_session, email="bulk-inst-role@test.credchain.dev", name="Bulk Role University")
     s1 = _register_student(client, inst["institution_id"], "bulk-role-1@test.credchain.dev", "BULK-ROLE-1")
 
     student_login = client.post(
@@ -153,7 +159,7 @@ def test_bulk_issuance_requires_institution_role(client, db_session):
 
 
 def test_bulk_issuance_empty_student_list_rejected(client, db_session):
-    inst = _register_institution(client, email="bulk-inst-empty@test.credchain.dev", name="Bulk Empty University")
+    inst = _register_institution(client, db_session, email="bulk-inst-empty@test.credchain.dev", name="Bulk Empty University")
     resp = client.post(
         "/api/institutions/me/credentials/bulk",
         data={"credential_type": "certification", "title": "Nothing"},

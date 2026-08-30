@@ -11,13 +11,23 @@ def _auth_header(token: str) -> dict:
 
 
 def test_company_new_application_count_is_real_and_clears_on_review(client, db_session):
+    from app.models.company import Company
+    from app.models.institution import Institution
+
+    company = Company(name="Notif Job Co")
+    institution = Institution(name="Notif Job Uni")
+    db_session.add_all([company, institution])
+    db_session.commit()
+    db_session.refresh(company)
+    db_session.refresh(institution)
+
     verifier = client.post(
         "/api/auth/register",
-        json={"email": "notif-job-co@test.credchain.dev", "password": "Password123", "full_name": "X", "role": "verifier", "company_name": "Notif Job Co"},
+        json={"email": "notif-job-co@test.credchain.dev", "password": "Password123", "full_name": "X", "role": "verifier", "company_id": str(company.id)},
     ).json()
     inst = client.post(
         "/api/auth/register",
-        json={"email": "notif-job-inst@test.credchain.dev", "password": "Password123", "full_name": "X", "role": "institution", "institution_name": "Notif Job Uni"},
+        json={"email": "notif-job-inst@test.credchain.dev", "password": "Password123", "full_name": "X", "role": "institution", "institution_id": str(institution.id)},
     ).json()
     student = client.post(
         "/api/auth/register",

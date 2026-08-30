@@ -14,20 +14,32 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_verifier(client, email, name):
+def _register_verifier(client, db_session, email, name):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Draft Verifier", "role": "verifier", "company_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Draft Verifier", "role": "verifier", "company_id": str(company.id)},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     return {"token": body["access_token"], "company_id": body["user"]["company_id"]}
 
 
-def _register_institution(client, email, name):
+def _register_institution(client, db_session, email, name):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Draft Inst", "role": "institution", "institution_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Draft Inst", "role": "institution", "institution_id": str(institution.id)},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
@@ -64,7 +76,7 @@ def _issue_credential(client, inst_token, student_id):
 
 
 def test_draft_job_is_fully_editable(client, db_session):
-    verifier = _register_verifier(client, "draft-co-1@test.credchain.dev", "Draft Co 1")
+    verifier = _register_verifier(client, db_session, "draft-co-1@test.credchain.dev", "Draft Co 1")
     job = client.post(
         "/api/companies/me/jobs",
         json={"title": "Engineer", "description": "Real.", "employment_type": "full_time", "minimum_cgpa": 7.0},
@@ -84,7 +96,7 @@ def test_draft_job_is_fully_editable(client, db_session):
 
 
 def test_draft_job_edit_then_publish_reflects_edits(client, db_session):
-    verifier = _register_verifier(client, "draft-co-2@test.credchain.dev", "Draft Co 2")
+    verifier = _register_verifier(client, db_session, "draft-co-2@test.credchain.dev", "Draft Co 2")
     job = client.post(
         "/api/companies/me/jobs",
         json={"title": "Engineer", "description": "Real.", "employment_type": "full_time"},
@@ -97,8 +109,8 @@ def test_draft_job_edit_then_publish_reflects_edits(client, db_session):
 
 
 def test_eligibility_fields_locked_once_a_real_application_exists(client, db_session):
-    verifier = _register_verifier(client, "draft-co-3@test.credchain.dev", "Draft Co 3")
-    inst = _register_institution(client, "draft-inst-3@test.credchain.dev", "Draft University 3")
+    verifier = _register_verifier(client, db_session, "draft-co-3@test.credchain.dev", "Draft Co 3")
+    inst = _register_institution(client, db_session, "draft-inst-3@test.credchain.dev", "Draft University 3")
     student = _register_student(client, inst["institution_id"], "draft-stu-3@test.credchain.dev", "DRAFT-STU-3")
     cred_id = _issue_credential(client, inst["token"], student["student_id"])
 
@@ -130,8 +142,8 @@ def test_eligibility_fields_locked_once_a_real_application_exists(client, db_ses
 
 
 def test_non_eligibility_fields_remain_editable_after_application_exists(client, db_session):
-    verifier = _register_verifier(client, "draft-co-4@test.credchain.dev", "Draft Co 4")
-    inst = _register_institution(client, "draft-inst-4@test.credchain.dev", "Draft University 4")
+    verifier = _register_verifier(client, db_session, "draft-co-4@test.credchain.dev", "Draft Co 4")
+    inst = _register_institution(client, db_session, "draft-inst-4@test.credchain.dev", "Draft University 4")
     student = _register_student(client, inst["institution_id"], "draft-stu-4@test.credchain.dev", "DRAFT-STU-4")
     cred_id = _issue_credential(client, inst["token"], student["student_id"])
 
@@ -158,8 +170,8 @@ def test_non_eligibility_fields_remain_editable_after_application_exists(client,
 
 
 def test_resubmitting_unchanged_eligibility_value_is_not_blocked(client, db_session):
-    verifier = _register_verifier(client, "draft-co-5@test.credchain.dev", "Draft Co 5")
-    inst = _register_institution(client, "draft-inst-5@test.credchain.dev", "Draft University 5")
+    verifier = _register_verifier(client, db_session, "draft-co-5@test.credchain.dev", "Draft Co 5")
+    inst = _register_institution(client, db_session, "draft-inst-5@test.credchain.dev", "Draft University 5")
     student = _register_student(client, inst["institution_id"], "draft-stu-5@test.credchain.dev", "DRAFT-STU-5")
     cred_id = _issue_credential(client, inst["token"], student["student_id"])
 
@@ -180,7 +192,7 @@ def test_resubmitting_unchanged_eligibility_value_is_not_blocked(client, db_sess
 
 
 def test_closed_job_cannot_be_edited_at_all(client, db_session):
-    verifier = _register_verifier(client, "draft-co-6@test.credchain.dev", "Draft Co 6")
+    verifier = _register_verifier(client, db_session, "draft-co-6@test.credchain.dev", "Draft Co 6")
     job = client.post(
         "/api/companies/me/jobs",
         json={"title": "Engineer", "description": "Real.", "employment_type": "full_time"},
@@ -194,8 +206,8 @@ def test_closed_job_cannot_be_edited_at_all(client, db_session):
 
 
 def test_other_company_cannot_edit_a_draft_they_do_not_own(client, db_session):
-    verifier_a = _register_verifier(client, "draft-co-7a@test.credchain.dev", "Draft Co 7A")
-    verifier_b = _register_verifier(client, "draft-co-7b@test.credchain.dev", "Draft Co 7B")
+    verifier_a = _register_verifier(client, db_session, "draft-co-7a@test.credchain.dev", "Draft Co 7A")
+    verifier_b = _register_verifier(client, db_session, "draft-co-7b@test.credchain.dev", "Draft Co 7B")
     job = client.post(
         "/api/companies/me/jobs",
         json={"title": "Engineer", "description": "Real.", "employment_type": "full_time"},

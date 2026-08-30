@@ -70,6 +70,7 @@ export function Documents() {
   function load() {
     getMyDocuments()
       .then(setDocuments)
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Unable to load your documents. Please try again.'))
       .finally(() => setLoading(false))
   }
 
@@ -203,10 +204,12 @@ export function Documents() {
           </div>
 
           {documents.length === 0 ? (
-            <GlassPanel className="flex flex-col items-center gap-2 p-6 text-center">
-              <FileQuestion className="h-8 w-8 text-faint" strokeWidth={1.5} />
-              <p className="text-[13px] text-muted">Documents you submit start as Unverified until your institution reviews them.</p>
-            </GlassPanel>
+            !error && (
+              <GlassPanel className="flex flex-col items-center gap-2 p-6 text-center">
+                <FileQuestion className="h-8 w-8 text-faint" strokeWidth={1.5} />
+                <p className="text-[13px] text-muted">Documents you submit start as Unverified until your institution reviews them.</p>
+              </GlassPanel>
+            )
           ) : (
             documents.map((d) => {
               const StatusIcon = STATUS_ICON[d.status]

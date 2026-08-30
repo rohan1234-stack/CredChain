@@ -24,7 +24,13 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_institution(client, email="inst1@test.credchain.dev", name="Test University"):
+def _register_institution(client, db_session, email="inst1@test.credchain.dev", name="Test University"):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
         json={
@@ -32,7 +38,7 @@ def _register_institution(client, email="inst1@test.credchain.dev", name="Test U
             "password": "Password123",
             "full_name": "Test Institution Admin",
             "role": "institution",
-            "institution_name": name,
+            "institution_id": str(institution.id),
         },
     )
     assert resp.status_code == 201, resp.text
@@ -82,7 +88,7 @@ def _issue(client, institution_token, student_id, **overrides):
 
 
 def test_institution_can_issue_credential_to_valid_student(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
 
     resp = _issue(client, inst["token"], student["student_id"])
@@ -101,7 +107,7 @@ def test_institution_can_issue_credential_to_valid_student(client, db_session):
 
 
 def test_student_receives_credential_after_issuance(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
     issued = _issue(client, inst["token"], student["student_id"]).json()
 
@@ -115,7 +121,7 @@ def test_student_receives_credential_after_issuance(client, db_session):
 
 
 def test_student_cannot_access_another_students_credential(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student_a = _register_student(client, db_session, inst["institution_id"], email="a@test.credchain.dev", identifier="STU-A")
     student_b = _register_student(client, db_session, inst["institution_id"], email="b@test.credchain.dev", identifier="STU-B")
 
@@ -129,8 +135,8 @@ def test_student_cannot_access_another_students_credential(client, db_session):
 
 
 def test_institution_cannot_issue_for_unaffiliated_student(client, db_session):
-    inst_a = _register_institution(client, email="insta@test.credchain.dev", name="University A")
-    inst_b = _register_institution(client, email="instb@test.credchain.dev", name="University B")
+    inst_a = _register_institution(client, db_session, email="insta@test.credchain.dev", name="University A")
+    inst_b = _register_institution(client, db_session, email="instb@test.credchain.dev", name="University B")
     # student affiliated with B
     student = _register_student(client, db_session, inst_b["institution_id"], email="crossaff@test.credchain.dev")
 
@@ -139,7 +145,7 @@ def test_institution_cannot_issue_for_unaffiliated_student(client, db_session):
 
 
 def test_issuance_for_nonexistent_student_returns_404(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     resp = _issue(client, inst["token"], str(uuid.uuid4()))
     assert resp.status_code == 404
 
@@ -148,7 +154,7 @@ def test_issuance_for_nonexistent_student_returns_404(client, db_session):
 
 
 def test_non_institution_cannot_issue_credentials(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
 
     resp = _issue(client, student["token"], student["student_id"])
@@ -159,7 +165,7 @@ def test_non_institution_cannot_issue_credentials(client, db_session):
 
 
 def test_non_pdf_upload_is_rejected(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
 
     data = {
@@ -176,7 +182,7 @@ def test_non_pdf_upload_is_rejected(client, db_session):
 
 def test_pdf_extension_with_non_pdf_magic_bytes_is_rejected(client, db_session):
     """Filename/Content-Type alone must not be trusted — the magic-byte check is the real gate."""
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
 
     data = {"student_id": student["student_id"], "credential_type": "certification", "title": "Fake PDF"}
@@ -192,7 +198,7 @@ def test_oversized_upload_is_rejected(client, db_session, monkeypatch):
 
     monkeypatch.setattr(document_service.settings, "max_document_size_bytes", 10)  # 10 bytes, trivially exceeded
 
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
 
     resp = _issue(client, inst["token"], student["student_id"])
@@ -200,7 +206,7 @@ def test_oversized_upload_is_rejected(client, db_session, monkeypatch):
 
 
 def test_empty_document_is_rejected(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
 
     data = {"student_id": student["student_id"], "credential_type": "certification", "title": "Empty"}
@@ -215,7 +221,7 @@ def test_empty_document_is_rejected(client, db_session):
 
 
 def test_credential_identifier_is_unique(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
 
     first = _issue(client, inst["token"], student["student_id"]).json()
@@ -229,7 +235,7 @@ def test_credential_identifier_is_unique(client, db_session):
 
 
 def test_institution_public_key_is_persisted(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     institution = db_session.query(Institution).filter(Institution.id == uuid.UUID(inst["institution_id"])).first()
     assert institution.public_key is not None
     assert "BEGIN PUBLIC KEY" in institution.public_key
@@ -239,7 +245,7 @@ def test_institution_public_key_is_persisted(client, db_session):
 
 
 def test_private_key_never_returned_by_api(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
     issued = _issue(client, inst["token"], student["student_id"])
 
@@ -264,7 +270,7 @@ def test_credential_persists_across_a_fresh_query(client, db_session):
     identity/cache) — proves the row is really in Postgres, not just held in
     memory by the object we got back from the POST.
     """
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
     issued = _issue(client, inst["token"], student["student_id"]).json()
 
@@ -286,7 +292,7 @@ def test_credential_persists_across_a_fresh_query(client, db_session):
 def test_issuance_creates_activity_log(client, db_session):
     from app.models.activity_log import ActivityLog
 
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
     issued = _issue(client, inst["token"], student["student_id"]).json()
 
@@ -312,7 +318,7 @@ def test_failed_issuance_does_not_leave_orphaned_document(client, db_session, mo
     """
     from app.services import credential_service
 
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
 
     saved_paths: list[str] = []

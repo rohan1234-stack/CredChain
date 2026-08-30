@@ -20,6 +20,8 @@ import { JobDetail } from './portals/student/JobDetail'
 import { MyApplications } from './portals/student/MyApplications'
 import { Companies } from './portals/student/Companies'
 import { CompanyDetail } from './portals/student/CompanyDetail'
+import { Institutions } from './portals/student/Institutions'
+import { InstitutionDetail } from './portals/student/InstitutionDetail'
 import { Requests } from './portals/student/Requests'
 import { ShareFlow } from './portals/student/ShareFlow'
 import { ShareConfirmation } from './portals/student/ShareConfirmation'
@@ -30,6 +32,9 @@ import { Documents as StudentDocuments } from './portals/student/Documents'
 
 // Public (no auth required)
 import { ShareAccess } from './portals/shared/ShareAccess'
+
+// Shared across every authenticated portal
+import { Notifications } from './portals/shared/Notifications'
 
 // Institution
 import { InstitutionDashboard } from './portals/institution/Dashboard'
@@ -52,10 +57,14 @@ import { Profile as CompanyProfile } from './portals/verifier/Profile'
 import { Jobs as CompanyJobs } from './portals/verifier/Jobs'
 import { Applications as CompanyApplications } from './portals/verifier/Applications'
 
+// Admin
+import { AdminDashboard } from './portals/admin/Dashboard'
+
 const ROLE_HOME: Record<Role, string> = {
   student: '/student',
   institution: '/institution',
   verifier: '/verifier',
+  admin: '/admin',
 }
 
 /** Maps the backend's AuthUser (types.ts) onto the frontend's display User shape (types.ts) that AppShell/Sidebar/TopBar already expect. */
@@ -102,6 +111,14 @@ function VerifierLayout() {
     </AppShell>
   )
 }
+function AdminLayout() {
+  const { user } = useAuth()
+  return (
+    <AppShell user={toDisplayUser(user!)}>
+      <Outlet />
+    </AppShell>
+  )
+}
 
 /** Root ("/"): an authenticated user goes straight to their own dashboard; everyone else sees the public landing page. */
 function RootRoute() {
@@ -135,6 +152,8 @@ function AppRoutes() {
           <Route path="jobs" element={<StudentJobs />} />
           <Route path="jobs/:id" element={<JobDetail />} />
           <Route path="my-applications" element={<MyApplications />} />
+          <Route path="institutions" element={<Institutions />} />
+          <Route path="institutions/:id" element={<InstitutionDetail />} />
           <Route path="companies" element={<Companies />} />
           <Route path="companies/:id" element={<CompanyDetail />} />
           <Route path="requests" element={<Requests />} />
@@ -144,6 +163,7 @@ function AppRoutes() {
           <Route path="share/confirmation" element={<ShareConfirmation />} />
           <Route path="shares" element={<Shares />} />
           <Route path="activity" element={<StudentActivity />} />
+          <Route path="notifications" element={<Notifications />} />
           <Route path="settings" element={<Stub icon={Settings} title="Settings" description="Account and notification settings are not part of this prototype." />} />
           <Route path="profile" element={<Stub icon={UserIcon} title="Profile" description="Profile management is not part of this prototype." />} />
         </Route>
@@ -160,6 +180,7 @@ function AppRoutes() {
           <Route path="certificate-requests" element={<InstitutionCertificateRequests />} />
           <Route path="documents" element={<DocumentReview />} />
           <Route path="activity" element={<InstitutionActivity />} />
+          <Route path="notifications" element={<Notifications />} />
           <Route path="settings" element={<Stub icon={Settings} title="Settings" description="Institution account settings are not part of this prototype." />} />
         </Route>
       </Route>
@@ -174,6 +195,14 @@ function AppRoutes() {
           <Route path="requests/new" element={<RequestCredentials />} />
           <Route path="verify/:credentialId" element={<VerificationResult />} />
           <Route path="activity" element={<VerifierActivity />} />
+          <Route path="notifications" element={<Notifications />} />
+        </Route>
+      </Route>
+
+      <Route element={<ProtectedRoute role="admin" />}>
+        <Route path="/admin" element={<AdminLayout />}>
+          <Route index element={<AdminDashboard />} />
+          <Route path="notifications" element={<Notifications />} />
         </Route>
       </Route>
 

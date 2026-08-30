@@ -21,11 +21,22 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24
 
     # --- CORS ---
-    cors_origins: str = "http://localhost:5173"
+    # Comma-separated. Render's CORS_ORIGINS env var (if set) overrides this default entirely —
+    # this fallback exists so the deployed API still allows the known production frontend even
+    # if that env var is unset or stale.
+    cors_origins: str = "http://localhost:5173,https://cred-chain-five.vercel.app"
 
     # --- Sharing (Phase 6) ---
     # Base URL used to build share links (e.g. http://localhost:5173/share/verify/<token>).
-    frontend_base_url: str = "http://localhost:5173"
+    frontend_base_url: str = "https://cred-chain-five.vercel.app"
+
+    # --- Institution signing-key encryption ---
+    # Master secret for encrypting institution private keys before they're stored in
+    # institutions.encrypted_private_key (see app/security/key_encryption.py). Kept ONLY as an
+    # env var — never in the database, never in source control — so that DB access alone can
+    # never decrypt a private key. No real default; empty means encryption is unavailable and
+    # key_encryption.py raises rather than silently operating with a weak/predictable key.
+    key_encryption_secret: str = ""
 
     # --- AI (Phase 7) ---
     # Disabled by default so the project runs with no key configured — see
@@ -42,6 +53,17 @@ class Settings(BaseSettings):
     # --- Document storage ---
     storage_path: str = "./storage"
     max_document_size_bytes: int = 10 * 1024 * 1024  # 10 MB
+    # Supabase Storage (durable — fixes credential/student-document PDFs being lost on every
+    # Render redeploy, since local disk there is ephemeral while Postgres is not). Same
+    # "disabled until configured" pattern as ai_enabled/blockchain_enabled: empty by default, so
+    # every existing test/dev environment that hasn't set these keeps using local filesystem
+    # storage completely unchanged (see document_service.py). SUPABASE_SERVICE_ROLE_KEY must
+    # never be sent to the frontend, logged, or committed — same handling as
+    # key_encryption_secret/blockchain_private_key above.
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_credential_bucket: str = "credential-documents"
+    supabase_student_document_bucket: str = "student-documents"
 
     # --- Institution signing keys (dev key management — see
     # app/services/signing_service.py for the documented tradeoff) ---

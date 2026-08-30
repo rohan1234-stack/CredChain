@@ -80,3 +80,4 @@ def require_role(*allowed_roles: UserRole):
 require_student = require_role(UserRole.STUDENT)
 require_institution = require_role(UserRole.INSTITUTION)
 require_verifier = require_role(UserRole.VERIFIER)
+require_admin = require_role(UserRole.ADMIN)

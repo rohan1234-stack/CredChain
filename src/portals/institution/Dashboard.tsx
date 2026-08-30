@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, FileText, GraduationCap, Award, ShieldCheck, MailWarning, FileSearch } from 'lucide-react'
+import { Plus, FileText, GraduationCap, Award, ShieldCheck, MailWarning, FileSearch, ShieldAlert, Clock3 } from 'lucide-react'
 import { getIssuedCredentials, getStudents, getInstitutionCertificateRequests, getInstitutionDocuments } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
 import type { Credential } from '../../types'
@@ -57,16 +57,40 @@ export function InstitutionDashboard() {
         <p className="text-base text-muted">Manage trusted academic credentials.</p>
       </div>
 
+      {user?.institution_verification_status === 'pending' && (
+        <div className="mb-6 flex items-start gap-3 rounded-xl border border-warn-line bg-warn-bg px-4 py-3.5 text-warn">
+          <Clock3 className="mt-0.5 h-5 w-5 shrink-0" strokeWidth={2} />
+          <div>
+            <p className="text-sm font-semibold">Pending verification</p>
+            <p className="text-[13px] leading-relaxed">
+              Your institution account is awaiting review by a CredChain administrator. You can browse your dashboard, but credential issuance is
+              disabled until your account is approved.
+            </p>
+          </div>
+        </div>
+      )}
+      {user?.institution_verification_status === 'rejected' && (
+        <div className="mb-6 flex items-start gap-3 rounded-xl border border-bad-line bg-bad-bg px-4 py-3.5 text-bad">
+          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" strokeWidth={2} />
+          <div>
+            <p className="text-sm font-semibold">Verification rejected</p>
+            <p className="text-[13px] leading-relaxed">
+              {user.institution_rejection_reason || 'Your institution account was not approved.'} Credential issuance is disabled.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Visual hero object — Stitch's "Secure Network Active" obsidian-emerald panel,
           reproduced with CSS/SVG glow rather than the fictional illustration asset. */}
-      <div className="relative mb-6 flex aspect-[3/1] w-full items-center justify-center overflow-hidden rounded-xl border border-good-line p-6"
+      <div className="relative mb-6 flex w-full items-center justify-center overflow-hidden rounded-xl border border-good-line px-6 py-8"
         style={{ background: 'radial-gradient(ellipse at center, rgba(0,56,36,0.35) 0%, rgba(10,15,30,0.7) 70%)', backdropFilter: 'blur(20px)' }}
       >
         <div aria-hidden className="absolute -left-10 -top-10 h-48 w-48 rounded-full bg-good/15 blur-[80px]" />
         <div aria-hidden className="absolute -bottom-10 -right-10 h-48 w-48 rounded-full bg-primary/15 blur-[80px]" />
-        <div className="relative flex flex-col items-center gap-2 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-good/10 text-good shadow-[0_0_24px_rgba(78,222,163,0.5)]">
-            <ShieldCheck className="h-8 w-8" strokeWidth={2} />
+        <div className="relative flex flex-col items-center gap-2.5 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-good/10 text-good shadow-[0_0_24px_rgba(78,222,163,0.5)]">
+            <ShieldCheck className="h-7 w-7" strokeWidth={2} />
           </div>
           <p className="text-xl font-semibold text-ink">Secure Network Active</p>
           <p className="rounded-full border border-good-line bg-good-bg px-3 py-1 font-[family-name:var(--font-mono)] text-[13px] text-good">
@@ -115,11 +139,17 @@ export function InstitutionDashboard() {
 
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-[15px] font-bold text-ink">Recently Issued</h2>
-        <Link to="/institution/credentials/issue">
-          <Button variant="solid" size="sm" icon={<Plus className="h-4 w-4" />}>
+        {user?.institution_verification_status === 'verified' ? (
+          <Link to="/institution/credentials/issue">
+            <Button variant="solid" size="sm" icon={<Plus className="h-4 w-4" />}>
+              Issue Credential
+            </Button>
+          </Link>
+        ) : (
+          <Button variant="solid" size="sm" icon={<Plus className="h-4 w-4" />} disabled>
             Issue Credential
           </Button>
-        </Link>
+        )}
       </div>
       {credentials.length === 0 ? (
         <EmptyState icon={FileText} title="No credentials yet" description="Credentials you issue will appear here." />

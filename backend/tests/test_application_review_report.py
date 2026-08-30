@@ -13,20 +13,32 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_verifier(client, email, name):
+def _register_verifier(client, db_session, email, name):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Review Verifier", "role": "verifier", "company_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Review Verifier", "role": "verifier", "company_id": str(company.id)},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     return {"token": body["access_token"], "company_id": body["user"]["company_id"]}
 
 
-def _register_institution(client, email, name):
+def _register_institution(client, db_session, email, name):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Review Inst", "role": "institution", "institution_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Review Inst", "role": "institution", "institution_id": str(institution.id)},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
@@ -60,8 +72,8 @@ def _issue(client, inst_token, student_id, **overrides):
 
 
 def test_company_sees_real_eligibility_on_the_application(client, db_session):
-    verifier = _register_verifier(client, "review-co-1@test.credchain.dev", "Review Co 1")
-    inst = _register_institution(client, "review-inst-1@test.credchain.dev", "Review University 1")
+    verifier = _register_verifier(client, db_session, "review-co-1@test.credchain.dev", "Review Co 1")
+    inst = _register_institution(client, db_session, "review-inst-1@test.credchain.dev", "Review University 1")
     student = _register_student(client, inst["institution_id"], "review-stu-1@test.credchain.dev", "REVIEW-STU-1")
 
     job = client.post(
@@ -93,8 +105,8 @@ def test_company_sees_real_eligibility_on_the_application(client, db_session):
 
 def test_company_sees_not_eligible_applicant_too_never_hides_it(client, db_session):
     """The company must see the real result even when it's unfavorable — never suppressed or fabricated as eligible."""
-    verifier = _register_verifier(client, "review-co-2@test.credchain.dev", "Review Co 2")
-    inst = _register_institution(client, "review-inst-2@test.credchain.dev", "Review University 2")
+    verifier = _register_verifier(client, db_session, "review-co-2@test.credchain.dev", "Review Co 2")
+    inst = _register_institution(client, db_session, "review-inst-2@test.credchain.dev", "Review University 2")
     student = _register_student(client, inst["institution_id"], "review-stu-2@test.credchain.dev", "REVIEW-STU-2")
 
     job = client.post(

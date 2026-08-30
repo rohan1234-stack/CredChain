@@ -41,11 +41,18 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     student: Mapped[Student | None] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
+    # Phase A added a second FK from institutions/companies to users (verified_by, the admin who
+    # reviewed the account) alongside the existing user_id (the registered account's own login).
+    # With two FK paths between the same table pair, SQLAlchemy can no longer infer which column
+    # this relationship should join on and raises AmbiguousForeignKeysError at mapper-configure
+    # time unless told explicitly — foreign_keys here is scoped to user_id only; verified_by is
+    # never navigated as a relationship anywhere (admin_service.py only ever assigns the raw
+    # UUID), so it needs no relationship object of its own.
     institution: Mapped[Institution | None] = relationship(
-        back_populates="user", uselist=False, cascade="all, delete-orphan"
+        back_populates="user", uselist=False, cascade="all, delete-orphan", foreign_keys="Institution.user_id"
     )
     company: Mapped[Company | None] = relationship(
-        back_populates="user", uselist=False, cascade="all, delete-orphan"
+        back_populates="user", uselist=False, cascade="all, delete-orphan", foreign_keys="Company.user_id"
     )
     activity_logs: Mapped[list[ActivityLog]] = relationship(
         back_populates="actor_user", foreign_keys="ActivityLog.actor_user_id"

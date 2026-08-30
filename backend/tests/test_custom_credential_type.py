@@ -18,7 +18,13 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_institution(client, email="custom-inst@test.credchain.dev", name="Custom Type University"):
+def _register_institution(client, db_session, email="custom-inst@test.credchain.dev", name="Custom Type University"):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
         json={
@@ -26,7 +32,7 @@ def _register_institution(client, email="custom-inst@test.credchain.dev", name="
             "password": "Password123",
             "full_name": "Custom Inst Admin",
             "role": "institution",
-            "institution_name": name,
+            "institution_id": str(institution.id),
         },
     )
     assert resp.status_code == 201, resp.text
@@ -52,7 +58,7 @@ def _register_student(client, institution_id, email="custom-stu@test.credchain.d
 
 
 def test_issue_custom_credential_type_persists_custom_name(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, inst["institution_id"])
 
     files = {"document": ("bonafide.pdf", SAMPLE_PDF_BYTES, "application/pdf")}
@@ -71,7 +77,7 @@ def test_issue_custom_credential_type_persists_custom_name(client, db_session):
 
 
 def test_custom_credential_type_verifies_like_any_other(client, db_session):
-    inst = _register_institution(client, email="custom-inst-v@test.credchain.dev", name="Custom Verify University")
+    inst = _register_institution(client, db_session, email="custom-inst-v@test.credchain.dev", name="Custom Verify University")
     student = _register_student(client, inst["institution_id"], email="custom-stu-v@test.credchain.dev", identifier="CUSTOM-STU-V")
 
     files = {"document": ("transfer.pdf", SAMPLE_PDF_BYTES, "application/pdf")}
@@ -84,6 +90,13 @@ def test_custom_credential_type_verifies_like_any_other(client, db_session):
     assert issue_resp.status_code == 201, issue_resp.text
     credential_id = issue_resp.json()["id"]
 
+    from app.models.company import Company
+
+    verify_company = Company(name="Custom Verify Co")
+    db_session.add(verify_company)
+    db_session.commit()
+    db_session.refresh(verify_company)
+
     verifier_resp = client.post(
         "/api/auth/register",
         json={
@@ -91,7 +104,7 @@ def test_custom_credential_type_verifies_like_any_other(client, db_session):
             "password": "Password123",
             "full_name": "Custom Verifier",
             "role": "verifier",
-            "company_name": "Custom Verify Co",
+            "company_id": str(verify_company.id),
         },
     )
     assert verifier_resp.status_code == 201, verifier_resp.text
@@ -128,7 +141,7 @@ def test_custom_credential_type_verifies_like_any_other(client, db_session):
 
 
 def test_empty_title_is_rejected(client, db_session):
-    inst = _register_institution(client, email="empty-title-inst@test.credchain.dev", name="Empty Title University")
+    inst = _register_institution(client, db_session, email="empty-title-inst@test.credchain.dev", name="Empty Title University")
     student = _register_student(client, inst["institution_id"], email="empty-title-stu@test.credchain.dev", identifier="EMPTY-TITLE-STU")
 
     files = {"document": ("doc.pdf", SAMPLE_PDF_BYTES, "application/pdf")}

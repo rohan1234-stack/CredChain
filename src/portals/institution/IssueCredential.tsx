@@ -58,6 +58,7 @@ export function IssueCredential() {
   const [graduationYear, setGraduationYear] = useState(String(new Date().getFullYear()))
   const [cgpa, setCgpa] = useState('8.7')
   const [document, setDocument] = useState<File | null>(null)
+  const [documentConfirmed, setDocumentConfirmed] = useState(false)
 
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -111,6 +112,11 @@ export function IssueCredential() {
 
     if (!title.trim()) {
       setError(type === 'other' ? 'Enter a credential name.' : 'Enter a credential title.')
+      return
+    }
+
+    if (!documentConfirmed) {
+      setError('Please confirm that the attached document matches the credential details before issuing.')
       return
     }
 
@@ -485,6 +491,17 @@ export function IssueCredential() {
                 being added to the student&rsquo;s wallet.
               </p>
             </div>
+
+            <label className="mb-4 flex items-start gap-2.5 text-[13px] text-ink">
+              <input
+                type="checkbox"
+                checked={documentConfirmed}
+                onChange={(e) => setDocumentConfirmed(e.target.checked)}
+                required
+                className="mt-0.5"
+              />
+              <span>I confirm that the attached document matches the student&rsquo;s credential details entered above.</span>
+            </label>
 
             {error && <div className="mb-4 rounded-lg bg-bad-bg px-3.5 py-2.5 text-[13px] text-bad">{error}</div>}
 

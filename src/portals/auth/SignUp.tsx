@@ -1,21 +1,28 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Navigate, useNavigate, Link } from 'react-router-dom'
-import { ShieldCheck, Search, Mail, KeyRound, User } from 'lucide-react'
+import { ShieldCheck, Search, Mail, KeyRound, User, Check } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { ApiError } from '../../lib/apiClient'
-import { getInstitutions } from '../../lib/api'
+import { getInstitutionsPage, getInstitution, getCompaniesPage, getRealCompany } from '../../lib/api'
 import { Button, RoleBackground, CredentialCard3D } from '../../components/ui'
-import { Select } from '../../components/ui/Input'
-import type { Role, RegisterPayload, InstitutionSummary } from '../../types'
+import type { Role, RegisterPayload, InstitutionSummary, Company } from '../../types'
 import { cx } from '../../lib/utils'
+
+/** Small, focused picker page size — a signup picker should show a short, relevant list, never
+ * the ~100-row "give me the whole pick-list" page the direct-share company picker or the legacy
+ * getInstitutions()/getRealCompanies() callers still intentionally use elsewhere. */
+const ORG_PICKER_PAGE_SIZE = 8
 
 const ROLE_HOME: Record<Role, string> = {
   student: '/student',
   institution: '/institution',
   verifier: '/verifier',
+  admin: '/admin',
 }
 
+// No 'admin' tab here — there is no public admin sign-up path (see backend
+// auth_service.register_user, which rejects role=admin regardless of what any client sends).
 const ROLE_TABS: { role: Role; label: string }[] = [
   { role: 'student', label: 'Student' },
   { role: 'institution', label: 'Institution' },
@@ -26,6 +33,9 @@ const WORLD_COPY: Record<Role, { headline: string; sub: string }> = {
   student: { headline: 'Your academic identity belongs to you.', sub: 'Every credential you receive lands directly in your own wallet — you decide what gets shared, with whom, and for how long.' },
   institution: { headline: 'Issue credentials people can trust.', sub: 'Sign transcripts, degrees, and certificates with your institution’s own key — every issuance is auditable and tamper-evident.' },
   verifier: { headline: 'Verify talent with confidence.', sub: 'Check a candidate’s real, signed academic record in seconds — no phone calls, no waiting on a registrar.' },
+  // Unreachable — role is always one of ROLE_TABS above — but Record<Role, ...> requires every
+  // key for type-safety. Never rendered.
+  admin: { headline: '', sub: '' },
 }
 
 /**
@@ -41,6 +51,16 @@ const WORLD_COPY: Record<Role, { headline: string; sub: string }> = {
  * functionality Stitch's own single auth screen doesn't need to express,
  * since Stitch's reference is mobile-only and has no room for it) — restyled
  * to sit behind the same centered composition rather than a desktop split.
+ *
+ * Institution/company "signup" is a CLAIM on an existing canonical directory
+ * record, never free-text creation of a new one (see auth_service.register_user):
+ * both roles get the exact same debounced server-side search selector the
+ * student role already used for its (optional) institution link, just
+ * required instead of optional, and backed by the company directory too.
+ * This is the actual fix for CredChain's duplicate-organization bug — a
+ * student and an institution account meaning the same real "Aalto University"
+ * now always resolve to the same Institution.id, because there is no other
+ * way for an institution/verifier account to come into existence.
  */
 export function SignUp() {
   const { user, register } = useAuth()
@@ -51,26 +71,28 @@ export function SignUp() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [studentIdentifier, setStudentIdentifier] = useState('')
-  const [institutions, setInstitutions] = useState<InstitutionSummary[]>([])
+
   const [institutionId, setInstitutionId] = useState('')
-  const [institutionSearch, setInstitutionSearch] = useState('')
-  const [institutionName, setInstitutionName] = useState('')
-  const [institutionRegistrationNumber, setInstitutionRegistrationNumber] = useState('')
-  const [companyName, setCompanyName] = useState('')
-  const [companyIndustry, setCompanyIndustry] = useState('')
-  const [companyWebsite, setCompanyWebsite] = useState('')
+  const [companyId, setCompanyId] = useState('')
+
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-
-  useEffect(() => {
-    if (role === 'student') getInstitutions().then(setInstitutions)
-  }, [role])
 
   if (user) return <Navigate to={ROLE_HOME[user.role]} replace />
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
+
+    if (role === 'institution' && !institutionId) {
+      setError('Select your institution from the directory to continue.')
+      return
+    }
+    if (role === 'verifier' && !companyId) {
+      setError('Select your company from the directory to continue.')
+      return
+    }
+
     setSubmitting(true)
 
     const payload: RegisterPayload = { email, password, full_name: fullName, role }
@@ -79,22 +101,35 @@ export function SignUp() {
       if (institutionId) payload.institution_id = institutionId
     }
     if (role === 'institution') {
-      payload.institution_name = institutionName
-      if (institutionRegistrationNumber) payload.institution_registration_number = institutionRegistrationNumber
+      payload.institution_id = institutionId
     }
     if (role === 'verifier') {
-      payload.company_name = companyName
-      if (companyIndustry) payload.company_industry = companyIndustry
-      if (companyWebsite) payload.company_website = companyWebsite
+      payload.company_id = companyId
     }
 
     try {
-      const registeredUser = await register(payload)
+      let registeredUser
+      try {
+        registeredUser = await register(payload)
+      } catch (err) {
+        // A status-0 ApiError means fetch() itself never got a response — a one-off network
+        // blip, not a real backend failure. One retry avoids a false "Server unavailable" for
+        // an account creation attempt that would otherwise have succeeded a moment later.
+        if (err instanceof ApiError && err.status === 0) {
+          registeredUser = await register(payload)
+        } else {
+          throw err
+        }
+      }
       navigate(ROLE_HOME[registeredUser.role], { replace: true })
     } catch (err) {
       if (err instanceof ApiError) {
+        // 409 covers both "email already registered" and "this institution/company already has a
+        // registered account" — the backend's detail text is already specific and safe to show
+        // as-is (see routes/auth.py), so no need (or ability) to guess which one happened here.
         if (err.status === 0) setError('Server unavailable. Please try again in a moment.')
-        else if (err.status === 409) setError('An account with this email already exists.')
+        else if (err.status === 409) setError(err.message)
+        else if (err.status === 404) setError(err.message)
         else if (err.status === 422) setError('Please check that all required fields are filled in correctly.')
         else setError('Something went wrong. Please try again.')
       } else {
@@ -141,10 +176,10 @@ export function SignUp() {
         </div>
 
         {/* Access Portal card */}
-        <div className="glass-surface w-full rounded-2xl p-6">
-          <div className="mb-4 flex items-center gap-3">
+        <div className="glass-surface w-full rounded-2xl p-8">
+          <div className="mb-9 grid grid-cols-1 items-start gap-y-6 sm:grid-cols-[auto_1fr] sm:gap-x-6">
             <CredentialCard3D issuer={role === 'institution' ? 'Your Institution' : role === 'verifier' ? 'Talent Network' : 'VITC'} title={ROLE_TABS.find((t) => t.role === role)!.label} subtitle="CredChain account" size="sm" className="hidden sm:block" />
-            <div>
+            <div className="min-w-0 sm:-mt-2 sm:border-l sm:border-line sm:pl-6">
               <h2 className="text-xl font-semibold text-ink">Access Portal</h2>
               <p className="text-[13px] leading-relaxed text-muted">{copy.headline}</p>
             </div>
@@ -177,54 +212,46 @@ export function SignUp() {
                   <input type="text" value={studentIdentifier} onChange={(e) => setStudentIdentifier(e.target.value)} required className="w-full bg-transparent text-sm text-ink outline-none" />
                 </RecessedField>
 
-                <div className="flex flex-col gap-1.5">
-                  <label className="ml-1 text-[11px] font-medium uppercase tracking-[0.1em] text-faint">Institution (optional — link later)</label>
-                  <div className="flex items-center gap-3 rounded-xl border border-line bg-canvas px-4 py-3 shadow-[inset_0_4px_10px_rgba(0,0,0,0.5)]">
-                    <Search className="h-[18px] w-[18px] shrink-0 text-faint" strokeWidth={2} />
-                    <input
-                      value={institutionSearch}
-                      onChange={(e) => setInstitutionSearch(e.target.value)}
-                      placeholder="Search institutions"
-                      className="w-full bg-transparent text-sm text-ink outline-none placeholder:text-faint"
-                    />
-                  </div>
-                  <Select value={institutionId} onChange={(e) => setInstitutionId(e.target.value)} className="mt-1">
-                    <option value="">No institution selected</option>
-                    {institutions
-                      .filter((i) => i.name.toLowerCase().includes(institutionSearch.trim().toLowerCase()))
-                      .map((i) => (
-                        <option key={i.id} value={i.id}>
-                          {i.name}
-                        </option>
-                      ))}
-                  </Select>
-                </div>
+                <OrgPicker<InstitutionSummary>
+                  label="Institution (optional — link later)"
+                  placeholder="Search institutions"
+                  selectedId={institutionId}
+                  onSelect={setInstitutionId}
+                  fetchPage={(search) => getInstitutionsPage({ search: search || undefined, pageSize: ORG_PICKER_PAGE_SIZE })}
+                  fetchById={getInstitution}
+                  initialHint="Search for a university"
+                  noResultsLabel={(q) => `No universities found for "${q}" — you can still create your account and link one later.`}
+                  errorLabel="Couldn't load universities. Try again — you can still create your account and link one later."
+                />
               </>
             )}
 
             {role === 'institution' && (
-              <>
-                <RecessedField label="Institution Name" icon={User}>
-                  <input type="text" value={institutionName} onChange={(e) => setInstitutionName(e.target.value)} required className="w-full bg-transparent text-sm text-ink outline-none" />
-                </RecessedField>
-                <RecessedField label="Registration Number (optional)" icon={User}>
-                  <input type="text" value={institutionRegistrationNumber} onChange={(e) => setInstitutionRegistrationNumber(e.target.value)} className="w-full bg-transparent text-sm text-ink outline-none" />
-                </RecessedField>
-              </>
+              <OrgPicker<InstitutionSummary>
+                label="Institution"
+                placeholder="Search institutions"
+                selectedId={institutionId}
+                onSelect={setInstitutionId}
+                fetchPage={(search) => getInstitutionsPage({ search: search || undefined, pageSize: ORG_PICKER_PAGE_SIZE })}
+                fetchById={getInstitution}
+                initialHint="Search for a university"
+                noResultsLabel={(q) => `No universities found for "${q}". Can't find your university? Contact an administrator to have it added to the directory.`}
+                errorLabel="Couldn't load universities. Try again."
+              />
             )}
 
             {role === 'verifier' && (
-              <>
-                <RecessedField label="Company Name" icon={User}>
-                  <input type="text" value={companyName} onChange={(e) => setCompanyName(e.target.value)} required className="w-full bg-transparent text-sm text-ink outline-none" />
-                </RecessedField>
-                <RecessedField label="Industry (optional)" icon={User}>
-                  <input type="text" value={companyIndustry} onChange={(e) => setCompanyIndustry(e.target.value)} className="w-full bg-transparent text-sm text-ink outline-none" />
-                </RecessedField>
-                <RecessedField label="Website (optional)" icon={User}>
-                  <input type="text" value={companyWebsite} onChange={(e) => setCompanyWebsite(e.target.value)} className="w-full bg-transparent text-sm text-ink outline-none" />
-                </RecessedField>
-              </>
+              <OrgPicker<Company>
+                label="Company"
+                placeholder="Search companies"
+                selectedId={companyId}
+                onSelect={setCompanyId}
+                fetchPage={(search) => getCompaniesPage({ search: search || undefined, pageSize: ORG_PICKER_PAGE_SIZE })}
+                fetchById={getRealCompany}
+                initialHint="Search for a company"
+                noResultsLabel={(q) => `No companies found for "${q}". Can't find your company? Contact an administrator to have it added to the directory.`}
+                errorLabel="Couldn't load companies. Try again."
+              />
             )}
 
             {error && (
@@ -258,6 +285,212 @@ function RecessedField({ label, icon: Icon, children }: { label: string; icon: t
         <Icon className="h-[18px] w-[18px] shrink-0 text-faint" strokeWidth={2} />
         {children}
       </div>
+    </div>
+  )
+}
+
+type PickableOrg = {
+  id: string
+  name: string
+  location: string | null
+  city: string | null
+  country: string | null
+  is_registered: boolean
+}
+
+/** "City, Country" when both are known, falling back to whichever single field is available. */
+function orgPlace(org: PickableOrg): string | null {
+  if (org.city && org.country) return `${org.city}, ${org.country}`
+  return org.location ?? org.country ?? org.city ?? null
+}
+
+/**
+ * Shared canonical-directory selector: debounced, server-side searched and server-side ranked
+ * (never a client-side filter/sort over the full directory) — the backend already returns a
+ * small, prefix-prioritized page (see company_service.list_companies / institution_service.
+ * list_institutions), this component just renders it. A "latest request wins" sequence guard
+ * means a slow, stale response can never overwrite a newer search's results.
+ *
+ * Used identically for the student's optional institution link, and for institution/verifier
+ * signup's required claim — the only differences are copy and which directory is searched. The
+ * selected value is always the exact backend row id (never derived from the row's name) — see
+ * handleSelect below, which calls onSelect(result.id) and nothing else resolves a selection.
+ */
+function OrgPicker<T extends PickableOrg>({
+  label,
+  placeholder,
+  selectedId,
+  onSelect,
+  fetchPage,
+  fetchById,
+  initialHint,
+  noResultsLabel,
+  errorLabel,
+}: {
+  label: string
+  placeholder: string
+  selectedId: string
+  onSelect: (id: string) => void
+  fetchPage: (search: string) => Promise<{ items: T[] }>
+  fetchById: (id: string) => Promise<T>
+  initialHint: string
+  noResultsLabel: (query: string) => string
+  errorLabel: string
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const [results, setResults] = useState<T[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [selectedResult, setSelectedResult] = useState<T | null>(null)
+
+  const containerRef = useRef<HTMLDivElement>(null)
+  const requestSeqRef = useRef(0)
+  const resolvedIdRef = useRef<string | null>(null)
+
+  // Debounced, server-searched + server-ranked fetch — only while the picker is actually open, so
+  // an untouched optional/already-selected picker never fires a request at all. `loading` flips to
+  // true synchronously (not inside the timeout) so the debounce window itself never has a chance to
+  // render a misleading "no results" flash before the request has even started.
+  useEffect(() => {
+    if (!isOpen) return
+    setLoading(true)
+    setError(null)
+    const seq = ++requestSeqRef.current
+    const handle = setTimeout(() => {
+      fetchPage(search.trim())
+        .then((page) => {
+          if (seq !== requestSeqRef.current) return // a newer search superseded this one
+          setResults(page.items)
+        })
+        .catch((err) => {
+          if (seq !== requestSeqRef.current) return
+          setError(err instanceof ApiError ? err.message : errorLabel)
+        })
+        .finally(() => {
+          if (seq === requestSeqRef.current) setLoading(false)
+        })
+    }, 300)
+    return () => clearTimeout(handle)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, search])
+
+  // Hydrates the rich "selected organization" display when selectedId is already set but this
+  // particular mounted instance never itself received the click (e.g. switching between the
+  // student/institution role tabs, which share the same institutionId but are separate OrgPicker
+  // instances) — never re-derives the id from the name, only ever fetches the exact row by id.
+  useEffect(() => {
+    if (!selectedId) {
+      setSelectedResult(null)
+      resolvedIdRef.current = null
+      return
+    }
+    if (resolvedIdRef.current === selectedId) return
+    let cancelled = false
+    fetchById(selectedId).then((org) => {
+      if (!cancelled) {
+        setSelectedResult(org)
+        resolvedIdRef.current = selectedId
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId])
+
+  useEffect(() => {
+    if (!isOpen) return
+    function handlePointerDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsOpen(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [isOpen])
+
+  function handleSelect(result: T) {
+    setSelectedResult(result)
+    resolvedIdRef.current = result.id
+    setIsOpen(false)
+    setSearch('')
+    onSelect(result.id)
+  }
+
+  const trimmed = search.trim()
+  const showSelectedCard = Boolean(selectedId) && !isOpen
+
+  return (
+    <div ref={containerRef} className="flex flex-col gap-1.5" onKeyDown={(e) => e.key === 'Escape' && setIsOpen(false)}>
+      <label className="ml-1 text-[11px] font-medium uppercase tracking-[0.1em] text-faint">{label}</label>
+
+      {showSelectedCard ? (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-canvas px-4 py-3 shadow-[inset_0_4px_10px_rgba(0,0,0,0.5)]">
+          {selectedResult ? (
+            <div className="flex min-w-0 items-start gap-2.5">
+              <Check className="mt-0.5 h-4 w-4 shrink-0 text-good" strokeWidth={2.5} />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-ink">{selectedResult.name}</p>
+                {orgPlace(selectedResult) && <p className="truncate text-[12px] text-muted">{orgPlace(selectedResult)}</p>}
+                <p className="text-[11px] text-faint">{selectedResult.is_registered ? 'Registered' : 'Directory only'}</p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-[13px] text-faint">Loading selected organization…</p>
+          )}
+          <button
+            type="button"
+            onClick={() => setIsOpen(true)}
+            className="shrink-0 text-[12px] font-semibold text-primary hover:underline"
+          >
+            Change
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center gap-3 rounded-xl border border-line bg-canvas px-4 py-3 shadow-[inset_0_4px_10px_rgba(0,0,0,0.5)] focus-within:border-electric">
+            <Search className="h-[18px] w-[18px] shrink-0 text-faint" strokeWidth={2} />
+            <input
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setIsOpen(true)
+              }}
+              onFocus={() => setIsOpen(true)}
+              placeholder={placeholder}
+              aria-label={label}
+              className="w-full bg-transparent text-sm text-ink outline-none placeholder:text-faint"
+            />
+          </div>
+
+          {!isOpen && <p className="ml-1 text-[12px] text-faint">{initialHint}</p>}
+
+          {isOpen && (
+            <div role="listbox" aria-label={label} className="max-h-56 overflow-y-auto rounded-xl border border-line bg-canvas-2 p-1">
+              {loading && <p className="px-3 py-2 text-[12px] text-faint">Searching…</p>}
+              {!loading && error && <p className="px-3 py-2 text-[12px] text-bad">{error}</p>}
+              {!loading && !error && results.length === 0 && (
+                <p className="px-3 py-2 text-[12px] text-faint">{noResultsLabel(trimmed)}</p>
+              )}
+              {!loading &&
+                !error &&
+                results.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    role="option"
+                    aria-selected={r.id === selectedId}
+                    onClick={() => handleSelect(r)}
+                    className="flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left hover:bg-canvas focus:bg-canvas focus:outline-none"
+                  >
+                    <span className="text-sm font-medium text-ink">{r.name}</span>
+                    {orgPlace(r) && <span className="text-[12px] text-muted">{orgPlace(r)}</span>}
+                    <span className="text-[11px] text-faint">{r.is_registered ? 'Registered' : 'Directory only'}</span>
+                  </button>
+                ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }

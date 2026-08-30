@@ -1,7 +1,7 @@
 import { cx } from '../../lib/utils'
 import { Glow } from './Glow'
 
-export type WorldRole = 'student' | 'institution' | 'verifier' | 'landing'
+export type WorldRole = 'student' | 'institution' | 'verifier' | 'admin' | 'landing'
 
 /**
  * The one reusable ambient background system for the whole app: deep
@@ -14,6 +14,8 @@ export type WorldRole = 'student' | 'institution' | 'verifier' | 'landing'
  * student    -> cyan / indigo   (personal, academic)
  * institution -> indigo / emerald (trust, authority)
  * verifier   -> violet / magenta (innovation, recruitment)
+ * admin      -> no glow branch — falls through to the neutral base grid/vignette only,
+ *               appropriate for a small utility surface with no "world" of its own
  * landing    -> indigo / violet / cyan (unified marketing identity)
  */
 export function RoleBackground({ role, className }: { role: WorldRole; className?: string }) {

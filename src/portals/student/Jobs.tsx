@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Briefcase, MapPin, Timer, Check } from 'lucide-react'
-import { getOpenJobs } from '../../lib/api'
+import { getOpenJobsPage } from '../../lib/api'
+import { ApiError } from '../../lib/apiClient'
 import type { Job } from '../../types'
-import { GlassPanel, Badge, EmptyState, SearchInput, FilterPills, Button } from '../../components/ui'
+import { GlassPanel, Badge, EmptyState, SearchInput, FilterPills, Button, Pagination } from '../../components/ui'
 import { SkeletonCard } from '../../components/ui/Skeleton'
+
+const PAGE_SIZE = 24
 
 const EMPLOYMENT_LABEL: Record<string, string> = {
   full_time: 'Full-time',
@@ -25,32 +28,56 @@ type EligFilter = 'all' | 'eligible' | 'incomplete'
  * list screen — this app has no per-job match-percentage computation until
  * a student opens Job Detail's real AI analysis, so the badge here uses the
  * real deterministic `job.eligibility.status` instead, and every other value
- * is a real Job field already returned by getOpenJobs().
+ * is a real Job field already returned by getOpenJobsPage().
  */
 export function Jobs() {
   const [jobs, setJobs] = useState<Job[]>([])
+  const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<EligFilter>('all')
+  const [hasSearched, setHasSearched] = useState(false)
+  const [page, setPage] = useState(1)
 
+  // Any search change resets to page 1 — otherwise a narrower search could land on a page past
+  // the new, smaller result set (same render-time-reset pattern as Institutions.tsx/Companies.tsx).
+  const [prevQuery, setPrevQuery] = useState(query)
+  if (prevQuery !== query) {
+    setPrevQuery(query)
+    setPage(1)
+  }
+
+  // Backend-driven search (GET /api/jobs?search=...&page=...), debounced so it doesn't fire a
+  // request per keystroke. The backend `search` param matches title, description, AND company
+  // name — same fields this page has always let a student search by — so this is a pure
+  // refactor, not a behavior change. The eligibility pill filter stays client-side: it's not a
+  // stable query filter (eligibility is computed per-student per-request), just a view over
+  // whatever the current page already returned.
   useEffect(() => {
-    getOpenJobs()
-      .then(setJobs)
-      .finally(() => setLoading(false))
-  }, [])
+    const handle = setTimeout(() => {
+      setLoading(true)
+      setError(null)
+      getOpenJobsPage({ search: query.trim() || undefined, page, pageSize: PAGE_SIZE })
+        .then((data) => {
+          setJobs(data.items)
+          setTotal(data.total)
+          setTotalPages(data.total_pages)
+          setHasSearched(true)
+        })
+        .catch((err) => setError(err instanceof ApiError ? err.message : 'Unable to load jobs. Please try again.'))
+        .finally(() => setLoading(false))
+    }, 300)
+    return () => clearTimeout(handle)
+  }, [query, page])
 
   const filtered = useMemo(() => {
-    return jobs.filter((j) => {
-      const matchesQuery = j.title.toLowerCase().includes(query.toLowerCase()) || j.company_name.toLowerCase().includes(query.toLowerCase())
-      const matchesFilter =
-        filter === 'all' ||
-        (filter === 'eligible' && j.eligibility?.status === 'eligible') ||
-        (filter === 'incomplete' && j.eligibility?.status === 'incomplete')
-      return matchesQuery && matchesFilter
-    })
-  }, [jobs, query, filter])
+    if (filter === 'all') return jobs
+    return jobs.filter((j) => filter === 'eligible' ? j.eligibility?.status === 'eligible' : j.eligibility?.status === 'incomplete')
+  }, [jobs, filter])
 
-  if (loading) return <div className="space-y-4"><SkeletonCard lines={3} /><SkeletonCard lines={3} /></div>
+  if (loading && jobs.length === 0 && !error) return <div className="space-y-4"><SkeletonCard lines={3} /><SkeletonCard lines={3} /></div>
 
   return (
     <div>
@@ -72,12 +99,22 @@ export function Jobs() {
         />
       </div>
 
-      {filtered.length === 0 ? (
-        <EmptyState
-          icon={Briefcase}
-          title="No open jobs"
-          description={jobs.length === 0 ? 'No companies have published a job yet.' : 'Try a different search term or filter.'}
-        />
+      {error && <div className="mb-5 max-w-2xl rounded-lg bg-bad-bg px-3.5 py-2.5 text-[13px] text-bad">{error}</div>}
+
+      {filtered.length === 0 && hasSearched ? (
+        !error && (
+          <EmptyState
+            icon={Briefcase}
+            title="No open jobs"
+            description={
+              jobs.length === 0
+                ? query
+                  ? `No open jobs found matching "${query}".`
+                  : 'No companies have published a job yet.'
+                : 'Try a different search term or filter.'
+            }
+          />
+        )
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {filtered.map((j) => {
@@ -157,6 +194,8 @@ export function Jobs() {
           })}
         </div>
       )}
+
+      {!error && <Pagination page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}
     </div>
   )
 }

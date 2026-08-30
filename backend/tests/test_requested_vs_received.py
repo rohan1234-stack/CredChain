@@ -14,10 +14,16 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_institution(client, email, name):
+def _register_institution(client, db_session, email, name):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Mismatch Inst", "role": "institution", "institution_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Mismatch Inst", "role": "institution", "institution_id": str(institution.id)},
     )
     body = resp.json()
     return {"token": body["access_token"], "institution_id": body["user"]["institution_id"]}
@@ -39,10 +45,16 @@ def _register_student(client, institution_id, email, identifier):
     return {"token": body["access_token"], "student_id": body["user"]["student_id"]}
 
 
-def _register_verifier(client, email, name):
+def _register_verifier(client, db_session, email, name):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Mismatch Verifier", "role": "verifier", "company_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Mismatch Verifier", "role": "verifier", "company_id": str(company.id)},
     )
     return {"token": resp.json()["access_token"]}
 
@@ -84,9 +96,9 @@ def _verify(client, verifier_token, credential_id):
 
 
 def test_requested_migration_shared_migration_is_verified(client, db_session):
-    inst = _register_institution(client, "mismatch-inst-1@test.credchain.dev", "Mismatch University 1")
+    inst = _register_institution(client, db_session, "mismatch-inst-1@test.credchain.dev", "Mismatch University 1")
     student = _register_student(client, inst["institution_id"], "mismatch-stu-1@test.credchain.dev", "MISMATCH-STU-1")
-    verifier = _register_verifier(client, "mismatch-verifier-1@test.credchain.dev", "Mismatch Co 1")
+    verifier = _register_verifier(client, db_session, "mismatch-verifier-1@test.credchain.dev", "Mismatch Co 1")
 
     credential_id = _issue(client, inst["token"], student["student_id"], "migration", "Migration Certificate")
     _request_and_share(client, verifier["token"], student["token"], "MISMATCH-STU-1", ["Migration Certificate"], credential_id)
@@ -96,9 +108,9 @@ def test_requested_migration_shared_migration_is_verified(client, db_session):
 
 
 def test_requested_migration_shared_degree_is_not_verified(client, db_session):
-    inst = _register_institution(client, "mismatch-inst-2@test.credchain.dev", "Mismatch University 2")
+    inst = _register_institution(client, db_session, "mismatch-inst-2@test.credchain.dev", "Mismatch University 2")
     student = _register_student(client, inst["institution_id"], "mismatch-stu-2@test.credchain.dev", "MISMATCH-STU-2")
-    verifier = _register_verifier(client, "mismatch-verifier-2@test.credchain.dev", "Mismatch Co 2")
+    verifier = _register_verifier(client, db_session, "mismatch-verifier-2@test.credchain.dev", "Mismatch Co 2")
 
     credential_id = _issue(client, inst["token"], student["student_id"], "degree", "B.Tech Degree")
     _request_and_share(client, verifier["token"], student["token"], "MISMATCH-STU-2", ["Migration Certificate"], credential_id)
@@ -113,9 +125,9 @@ def test_requested_migration_shared_degree_is_not_verified(client, db_session):
 
 
 def test_requested_transcript_shared_degree_is_not_verified(client, db_session):
-    inst = _register_institution(client, "mismatch-inst-3@test.credchain.dev", "Mismatch University 3")
+    inst = _register_institution(client, db_session, "mismatch-inst-3@test.credchain.dev", "Mismatch University 3")
     student = _register_student(client, inst["institution_id"], "mismatch-stu-3@test.credchain.dev", "MISMATCH-STU-3")
-    verifier = _register_verifier(client, "mismatch-verifier-3@test.credchain.dev", "Mismatch Co 3")
+    verifier = _register_verifier(client, db_session, "mismatch-verifier-3@test.credchain.dev", "Mismatch Co 3")
 
     credential_id = _issue(client, inst["token"], student["student_id"], "degree", "B.Tech Degree")
     _request_and_share(client, verifier["token"], student["token"], "MISMATCH-STU-3", ["Transcript"], credential_id)
@@ -125,9 +137,9 @@ def test_requested_transcript_shared_degree_is_not_verified(client, db_session):
 
 
 def test_requested_degree_shared_degree_is_verified(client, db_session):
-    inst = _register_institution(client, "mismatch-inst-4@test.credchain.dev", "Mismatch University 4")
+    inst = _register_institution(client, db_session, "mismatch-inst-4@test.credchain.dev", "Mismatch University 4")
     student = _register_student(client, inst["institution_id"], "mismatch-stu-4@test.credchain.dev", "MISMATCH-STU-4")
-    verifier = _register_verifier(client, "mismatch-verifier-4@test.credchain.dev", "Mismatch Co 4")
+    verifier = _register_verifier(client, db_session, "mismatch-verifier-4@test.credchain.dev", "Mismatch Co 4")
 
     credential_id = _issue(client, inst["token"], student["student_id"], "degree", "B.Tech Degree")
     _request_and_share(client, verifier["token"], student["token"], "MISMATCH-STU-4", ["Degree"], credential_id)
@@ -140,9 +152,9 @@ def test_requested_degree_shared_degree_is_verified(client, db_session):
 
 
 def test_company_sees_requested_and_shared_credentials_on_request_list(client, db_session):
-    inst = _register_institution(client, "mismatch-inst-5@test.credchain.dev", "Mismatch University 5")
+    inst = _register_institution(client, db_session, "mismatch-inst-5@test.credchain.dev", "Mismatch University 5")
     student = _register_student(client, inst["institution_id"], "mismatch-stu-5@test.credchain.dev", "MISMATCH-STU-5")
-    verifier = _register_verifier(client, "mismatch-verifier-5@test.credchain.dev", "Mismatch Co 5")
+    verifier = _register_verifier(client, db_session, "mismatch-verifier-5@test.credchain.dev", "Mismatch Co 5")
 
     credential_id = _issue(client, inst["token"], student["student_id"], "degree", "B.Tech Degree")
     req = _request_and_share(client, verifier["token"], student["token"], "MISMATCH-STU-5", ["Migration Certificate"], credential_id)
@@ -167,9 +179,9 @@ def test_credential_without_request_context_still_verifies_normally(client, db_s
 
 
 def test_revoked_credential_still_reports_revoked_even_if_type_mismatched(client, db_session):
-    inst = _register_institution(client, "mismatch-inst-6@test.credchain.dev", "Mismatch University 6")
+    inst = _register_institution(client, db_session, "mismatch-inst-6@test.credchain.dev", "Mismatch University 6")
     student = _register_student(client, inst["institution_id"], "mismatch-stu-6@test.credchain.dev", "MISMATCH-STU-6")
-    verifier = _register_verifier(client, "mismatch-verifier-6@test.credchain.dev", "Mismatch Co 6")
+    verifier = _register_verifier(client, db_session, "mismatch-verifier-6@test.credchain.dev", "Mismatch Co 6")
 
     credential_id = _issue(client, inst["token"], student["student_id"], "degree", "B.Tech Degree")
     _request_and_share(client, verifier["token"], student["token"], "MISMATCH-STU-6", ["Migration Certificate"], credential_id)

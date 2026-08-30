@@ -1,8 +1,6 @@
 import uuid
-from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -15,11 +13,13 @@ from ..models.user import User
 from ..schemas.credential import BulkIssuanceItemResponse, BulkIssuanceResponse, CredentialResponse, StudentSummaryResponse
 from ..schemas.institution import InstitutionSummaryResponse
 from ..schemas.institution_request import InstitutionCertificateRequestResponse, RejectInstitutionRequestBody
+from ..schemas.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page
 from ..schemas.student_document import ApproveStudentDocumentBody, RejectStudentDocumentBody, StudentDocumentResponse
 from ..security.permissions import require_institution
-from ..services import credential_service, institution_request_service, student_document_service
+from ..services import credential_service, document_service, institution_request_service, institution_service, signing_service, student_document_service
 from ..services.credential_service import (
     CredentialValidationError,
+    InstitutionNotVerifiedError,
     StudentNotAffiliatedError,
     StudentNotFoundError,
     to_credential_response,
@@ -28,15 +28,54 @@ from ..services.document_service import DocumentTooLargeError, EmptyDocumentErro
 
 router = APIRouter(prefix="/api/institutions", tags=["institutions"])
 
+# Honest, generic-on-purpose: never reveals which institution, which storage layer, or any
+# path/key material — just that signing is unavailable and issuance can't proceed right now.
+_SIGNING_KEY_UNAVAILABLE_DETAIL = (
+    "This institution's signing key is currently unavailable on the server. "
+    "Credential issuance is temporarily disabled — please contact CredChain support."
+)
+
+
+def _signing_key_unavailable_error() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_SIGNING_KEY_UNAVAILABLE_DETAIL)
+
 
 @router.get(
     "",
-    response_model=list[InstitutionSummaryResponse],
-    summary="List legitimate institutions — public, used to let a student pick a real institution to link to (never a way to invent one)",
+    response_model=Page[InstitutionSummaryResponse],
+    summary=(
+        "Paginated, searchable institution directory — public. Used both to let a student pick a real "
+        "institution to link to, and by the student Institution Directory (search/location/country/"
+        "region/institution_type filters are additive; never a way to invent an institution). Scales to "
+        "a globally-imported dataset (see scripts/import_institutions.py) — never returns the whole table."
+    ),
 )
-def list_institutions(db: Session = Depends(get_db)) -> list[InstitutionSummaryResponse]:
-    institutions = db.query(Institution).order_by(Institution.name).all()
-    return [InstitutionSummaryResponse.model_validate(i) for i in institutions]
+def list_institutions(
+    search: str | None = Query(default=None, description="Matches institution name, location, or city"),
+    location: str | None = Query(default=None),
+    country: str | None = Query(default=None, description="Exact match, e.g. 'India'"),
+    region: str | None = Query(default=None, description="Substring match against state/province"),
+    institution_type: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    db: Session = Depends(get_db),
+) -> Page[InstitutionSummaryResponse]:
+    rows, total = institution_service.list_institutions(
+        db, search=search, location=location, country=country, region=region, institution_type=institution_type, page=page, page_size=page_size
+    )
+    return institution_service.to_page_response(rows, total=total, page=page, page_size=page_size)
+
+
+@router.get(
+    "/{institution_id}",
+    response_model=InstitutionSummaryResponse,
+    summary="View one institution's public directory profile",
+)
+def get_institution(institution_id: uuid.UUID, db: Session = Depends(get_db)) -> InstitutionSummaryResponse:
+    institution = institution_service.get_institution(db, institution_id)
+    if institution is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Institution not found")
+    return institution_service.to_response(institution)
 
 
 def _institution_of(current_user: User) -> Institution:
@@ -44,6 +83,14 @@ def _institution_of(current_user: User) -> Institution:
     if current_user.institution is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No institution profile for this account")
     return current_user.institution
+
+
+def _verification_error(exc: InstitutionNotVerifiedError) -> HTTPException:
+    if exc.status.value == "rejected":
+        detail = "Your institution's verification was rejected. Credentials cannot be issued."
+    else:
+        detail = "Your institution account is pending verification. Credentials cannot be issued until an administrator approves it."
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
 @router.get("/me/students", response_model=list[StudentSummaryResponse], summary="List students affiliated with the authenticated institution")
@@ -172,6 +219,10 @@ async def issue_credential(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="This student is not affiliated with your institution"
         )
+    except InstitutionNotVerifiedError as exc:
+        raise _verification_error(exc)
+    except signing_service.InstitutionKeyMissingError:
+        raise _signing_key_unavailable_error()
     except CredentialValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except EmptyDocumentError as exc:
@@ -180,6 +231,11 @@ async def issue_credential(
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc))
     except DocumentTooLargeError as exc:
         raise HTTPException(status_code=413, detail=str(exc))  # 413 Payload Too Large (installed FastAPI's named constant is deprecated)
+    except document_service.StorageUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document storage is temporarily unavailable. Please try again shortly.",
+        )
     except institution_request_service.RequestNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certificate request not found")
     except institution_request_service.RequestNotOwnedError:
@@ -229,8 +285,17 @@ async def bulk_issue_credential(
             cgpa=cgpa,
             documents=documents,
         )
+    except InstitutionNotVerifiedError as exc:
+        raise _verification_error(exc)
+    except signing_service.InstitutionKeyMissingError:
+        raise _signing_key_unavailable_error()
     except CredentialValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    except document_service.StorageUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document storage is temporarily unavailable. Please try again shortly.",
+        )
 
     return BulkIssuanceResponse(
         results=[
@@ -337,7 +402,7 @@ def get_student_document(
 )
 def get_student_document_file(
     document_id: uuid.UUID, current_user: User = Depends(require_institution), db: Session = Depends(get_db)
-) -> FileResponse:
+) -> Response:
     institution = _institution_of(current_user)
     try:
         document = student_document_service.get_document_for_view(db, institution, document_id)
@@ -346,10 +411,22 @@ def get_student_document_file(
     except student_document_service.DocumentNotOwnedError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This document was not uploaded for your institution")
 
-    path = Path(document.storage_path)
-    if not path.exists():
+    try:
+        exists = document_service.document_exists(document.storage_path)
+    except document_service.StorageUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document storage is temporarily unavailable. Please try again shortly.",
+        )
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file is missing on this server")
-    return FileResponse(path, media_type=document.mime_type, filename=document.original_filename)
+
+    data = document_service.read_document(document.storage_path)
+    return Response(
+        content=data,
+        media_type=document.mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{document.original_filename}"'},
+    )
 
 
 @router.post(
@@ -381,6 +458,15 @@ def approve_student_document(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This document has already been reviewed")
     except student_document_service.DocumentFileMissingError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Uploaded file is missing on this server")
+    except document_service.StorageUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document storage is temporarily unavailable. Please try again shortly.",
+        )
+    except InstitutionNotVerifiedError as exc:
+        raise _verification_error(exc)
+    except signing_service.InstitutionKeyMissingError:
+        raise _signing_key_unavailable_error()
     except CredentialValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return student_document_service.to_response(document)

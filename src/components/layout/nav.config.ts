@@ -3,6 +3,7 @@ import {
   Wallet,
   Briefcase,
   Building2,
+  Landmark,
   Inbox,
   Activity,
   Users,
@@ -11,6 +12,7 @@ import {
   ClipboardList,
   ShieldQuestion,
   FileStack,
+  ShieldCheck,
 } from 'lucide-react'
 import type { Role } from '../../types'
 import type { LucideIcon } from 'lucide-react'
@@ -29,6 +31,7 @@ export const NAV_CONFIG: Record<Role, { primary: NavItem[]; secondary: NavItem[]
       { to: '/student/credentials', label: 'Credentials', icon: Wallet },
       { to: '/student/jobs', label: 'Jobs', icon: Briefcase },
       { to: '/student/my-applications', label: 'My Applications', icon: FileStack },
+      { to: '/student/institutions', label: 'Institutions', icon: Landmark },
       { to: '/student/companies', label: 'Companies', icon: Building2 },
       { to: '/student/requests', label: 'Incoming Requests', icon: Inbox },
       { to: '/student/certificate-requests', label: 'Request from Institution', icon: ClipboardList },
@@ -43,7 +46,6 @@ export const NAV_CONFIG: Record<Role, { primary: NavItem[]; secondary: NavItem[]
       { to: '/institution', label: 'Dashboard', icon: LayoutGrid },
       { to: '/institution/students', label: 'Students', icon: Users },
       { to: '/institution/credentials', label: 'Credentials', icon: FileCheck2 },
-      { to: '/institution/requests', label: 'Requests', icon: Inbox },
       { to: '/institution/certificate-requests', label: 'Certificate Requests', icon: ClipboardList },
       { to: '/institution/documents', label: 'Document Verification', icon: ShieldQuestion },
       { to: '/institution/activity', label: 'Activity', icon: Activity },
@@ -59,6 +61,10 @@ export const NAV_CONFIG: Record<Role, { primary: NavItem[]; secondary: NavItem[]
       { to: '/verifier/requests', label: 'Requests', icon: Inbox },
       { to: '/verifier/activity', label: 'Activity', icon: Activity },
     ],
+    secondary: [],
+  },
+  admin: {
+    primary: [{ to: '/admin', label: 'Verification', icon: ShieldCheck }],
     secondary: [],
   },
 }

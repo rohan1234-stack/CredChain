@@ -12,10 +12,16 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_institution(client, email, name):
+def _register_institution(client, db_session, email, name):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Perm Inst", "role": "institution", "institution_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Perm Inst", "role": "institution", "institution_id": str(institution.id)},
     )
     body = resp.json()
     return {"token": body["access_token"], "institution_id": body["user"]["institution_id"]}
@@ -37,10 +43,16 @@ def _register_student(client, institution_id, email, identifier):
     return {"token": body["access_token"], "student_id": body["user"]["student_id"]}
 
 
-def _register_verifier(client, email, name):
+def _register_verifier(client, db_session, email, name):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Perm Verifier", "role": "verifier", "company_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Perm Verifier", "role": "verifier", "company_id": str(company.id)},
     )
     return {"token": resp.json()["access_token"]}
 
@@ -71,9 +83,9 @@ def _request_and_share(client, verifier_token, student_token, student_identifier
 
 
 def test_view_only_recipient_can_view(client, db_session):
-    inst = _register_institution(client, "perm-inst-1@test.credchain.dev", "Perm University 1")
+    inst = _register_institution(client, db_session, "perm-inst-1@test.credchain.dev", "Perm University 1")
     student = _register_student(client, inst["institution_id"], "perm-stu-1@test.credchain.dev", "PERM-STU-1")
-    verifier = _register_verifier(client, "perm-verifier-1@test.credchain.dev", "Perm Co 1")
+    verifier = _register_verifier(client, db_session, "perm-verifier-1@test.credchain.dev", "Perm Co 1")
     credential_id = _issue(client, inst["token"], student["student_id"])
     _request_and_share(client, verifier["token"], student["token"], "PERM-STU-1", credential_id)
 
@@ -82,9 +94,9 @@ def test_view_only_recipient_can_view(client, db_session):
 
 
 def test_view_only_recipient_cannot_download(client, db_session):
-    inst = _register_institution(client, "perm-inst-2@test.credchain.dev", "Perm University 2")
+    inst = _register_institution(client, db_session, "perm-inst-2@test.credchain.dev", "Perm University 2")
     student = _register_student(client, inst["institution_id"], "perm-stu-2@test.credchain.dev", "PERM-STU-2")
-    verifier = _register_verifier(client, "perm-verifier-2@test.credchain.dev", "Perm Co 2")
+    verifier = _register_verifier(client, db_session, "perm-verifier-2@test.credchain.dev", "Perm Co 2")
     credential_id = _issue(client, inst["token"], student["student_id"])
     _request_and_share(client, verifier["token"], student["token"], "PERM-STU-2", credential_id, permission="view_only")
 
@@ -93,9 +105,9 @@ def test_view_only_recipient_cannot_download(client, db_session):
 
 
 def test_view_download_recipient_can_view_and_download(client, db_session):
-    inst = _register_institution(client, "perm-inst-3@test.credchain.dev", "Perm University 3")
+    inst = _register_institution(client, db_session, "perm-inst-3@test.credchain.dev", "Perm University 3")
     student = _register_student(client, inst["institution_id"], "perm-stu-3@test.credchain.dev", "PERM-STU-3")
-    verifier = _register_verifier(client, "perm-verifier-3@test.credchain.dev", "Perm Co 3")
+    verifier = _register_verifier(client, db_session, "perm-verifier-3@test.credchain.dev", "Perm Co 3")
     credential_id = _issue(client, inst["token"], student["student_id"])
     _request_and_share(client, verifier["token"], student["token"], "PERM-STU-3", credential_id, permission="view_download")
 
@@ -106,12 +118,12 @@ def test_view_download_recipient_can_view_and_download(client, db_session):
 
 
 def test_unauthorized_recipient_denied_both(client, db_session):
-    inst = _register_institution(client, "perm-inst-4@test.credchain.dev", "Perm University 4")
+    inst = _register_institution(client, db_session, "perm-inst-4@test.credchain.dev", "Perm University 4")
     student = _register_student(client, inst["institution_id"], "perm-stu-4@test.credchain.dev", "PERM-STU-4")
-    _register_verifier(client, "perm-verifier-4a@test.credchain.dev", "Perm Co 4A")  # shared with
-    other_verifier = _register_verifier(client, "perm-verifier-4b@test.credchain.dev", "Perm Co 4B")  # NOT shared with
+    _register_verifier(client, db_session, "perm-verifier-4a@test.credchain.dev", "Perm Co 4A")  # shared with
+    other_verifier = _register_verifier(client, db_session, "perm-verifier-4b@test.credchain.dev", "Perm Co 4B")  # NOT shared with
     credential_id = _issue(client, inst["token"], student["student_id"])
-    _request_and_share(client, _register_verifier(client, "perm-verifier-4c@test.credchain.dev", "Perm Co 4C")["token"], student["token"], "PERM-STU-4", credential_id, permission="view_download")
+    _request_and_share(client, _register_verifier(client, db_session, "perm-verifier-4c@test.credchain.dev", "Perm Co 4C")["token"], student["token"], "PERM-STU-4", credential_id, permission="view_download")
 
     view_resp = client.get(f"/api/verification/credentials/{credential_id}/view", headers=_auth_header(other_verifier["token"]))
     assert view_resp.status_code == 403
@@ -120,9 +132,9 @@ def test_unauthorized_recipient_denied_both(client, db_session):
 
 
 def test_revoked_share_denies_view_and_download(client, db_session):
-    inst = _register_institution(client, "perm-inst-5@test.credchain.dev", "Perm University 5")
+    inst = _register_institution(client, db_session, "perm-inst-5@test.credchain.dev", "Perm University 5")
     student = _register_student(client, inst["institution_id"], "perm-stu-5@test.credchain.dev", "PERM-STU-5")
-    verifier = _register_verifier(client, "perm-verifier-5@test.credchain.dev", "Perm Co 5")
+    verifier = _register_verifier(client, db_session, "perm-verifier-5@test.credchain.dev", "Perm Co 5")
     credential_id = _issue(client, inst["token"], student["student_id"])
     grant = _request_and_share(client, verifier["token"], student["token"], "PERM-STU-5", credential_id, permission="view_download")
 
@@ -141,9 +153,9 @@ def test_expired_share_denies_view_and_download(client, db_session):
 
     from app.models.share_grant import ShareGrant
 
-    inst = _register_institution(client, "perm-inst-6@test.credchain.dev", "Perm University 6")
+    inst = _register_institution(client, db_session, "perm-inst-6@test.credchain.dev", "Perm University 6")
     student = _register_student(client, inst["institution_id"], "perm-stu-6@test.credchain.dev", "PERM-STU-6")
-    verifier = _register_verifier(client, "perm-verifier-6@test.credchain.dev", "Perm Co 6")
+    verifier = _register_verifier(client, db_session, "perm-verifier-6@test.credchain.dev", "Perm Co 6")
     credential_id = _issue(client, inst["token"], student["student_id"])
     grant = _request_and_share(client, verifier["token"], student["token"], "PERM-STU-6", credential_id, permission="view_download")
 
@@ -169,9 +181,9 @@ def test_most_recent_grant_wins_when_multiple_active_grants_exist(client, db_ses
     view_download could still be silently stuck on an earlier view_only
     grant. The most recent grant must always win.
     """
-    inst = _register_institution(client, "perm-inst-8@test.credchain.dev", "Perm University 8")
+    inst = _register_institution(client, db_session, "perm-inst-8@test.credchain.dev", "Perm University 8")
     student = _register_student(client, inst["institution_id"], "perm-stu-8@test.credchain.dev", "PERM-STU-8")
-    verifier = _register_verifier(client, "perm-verifier-8@test.credchain.dev", "Perm Co 8")
+    verifier = _register_verifier(client, db_session, "perm-verifier-8@test.credchain.dev", "Perm Co 8")
     credential_id = _issue(client, inst["token"], student["student_id"])
 
     # First grant: view_only.
@@ -184,9 +196,9 @@ def test_most_recent_grant_wins_when_multiple_active_grants_exist(client, db_ses
 
 
 def test_share_preview_and_grant_response_surface_permission(client, db_session):
-    inst = _register_institution(client, "perm-inst-7@test.credchain.dev", "Perm University 7")
+    inst = _register_institution(client, db_session, "perm-inst-7@test.credchain.dev", "Perm University 7")
     student = _register_student(client, inst["institution_id"], "perm-stu-7@test.credchain.dev", "PERM-STU-7")
-    verifier = _register_verifier(client, "perm-verifier-7@test.credchain.dev", "Perm Co 7")
+    verifier = _register_verifier(client, db_session, "perm-verifier-7@test.credchain.dev", "Perm Co 7")
     credential_id = _issue(client, inst["token"], student["student_id"])
     grant = _request_and_share(client, verifier["token"], student["token"], "PERM-STU-7", credential_id, permission="view_download")
 

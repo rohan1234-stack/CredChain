@@ -11,7 +11,7 @@ import { ResultCard } from './components/ResultCard'
 const CHECK_LABELS: { key: keyof VerificationChecksResult; label: string; description: string }[] = [
   { key: 'issuer', label: 'Issuer identity confirmed', description: 'The signing institution is a real, registered issuer on CredChain.' },
   { key: 'signature', label: 'Digital signature valid', description: 'The Ed25519 signature matches the credential exactly as issued.' },
-  { key: 'integrity', label: 'Document integrity valid', description: "The attached document's hash matches what the institution signed." },
+  { key: 'integrity', label: 'Document unaltered', description: 'The attached document matches the exact file that was signed at issuance.' },
   { key: 'status', label: 'Status: active', description: 'The institution has not revoked this credential since issuance.' },
   { key: 'access', label: 'Access authorized', description: 'This viewer holds a valid, unexpired grant to see this credential.' },
 ]

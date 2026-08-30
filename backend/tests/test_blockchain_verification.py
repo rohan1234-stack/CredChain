@@ -72,8 +72,12 @@ def _register(client, *, role, email, **extra):
     return resp.json()
 
 
-def _register_institution(client, email="bcv-inst@test.credchain.dev", name="Blockchain Verify University"):
-    body = _register(client, role="institution", email=email, institution_name=name)
+def _register_institution(client, db_session, email="bcv-inst@test.credchain.dev", name="Blockchain Verify University"):
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
+    body = _register(client, role="institution", email=email, institution_id=str(institution.id))
     return {"token": body["access_token"], "institution_id": body["user"]["institution_id"]}
 
 
@@ -86,8 +90,14 @@ def _register_student(client, db_session, institution_id, email="bcv-student@tes
     return {"token": body["access_token"], "student_id": student_id}
 
 
-def _register_verifier(client, email="bcv-verifier@test.credchain.dev", name="Blockchain Verify Company"):
-    body = _register(client, role="verifier", email=email, company_name=name)
+def _register_verifier(client, db_session, email="bcv-verifier@test.credchain.dev", name="Blockchain Verify Company"):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
+    body = _register(client, role="verifier", email=email, company_id=str(company.id))
     return {"token": body["access_token"], "company_id": body["user"]["company_id"]}
 
 
@@ -131,10 +141,10 @@ def _verify(client, verifier_token, credential_id):
 
 
 def _setup(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
     credential = _issue_credential(client, inst["token"], student["student_id"])
-    verifier = _register_verifier(client)
+    verifier = _register_verifier(client, db_session)
     _grant_access(
         db_session, student_id=student["student_id"], company_id=verifier["company_id"], credential_id=credential["id"]
     )
@@ -240,10 +250,10 @@ def test_revoked_credential_still_revoked_with_blockchain_not_anchored(client, d
 
 
 def test_expired_share_is_unauthorized(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
     credential = _issue_credential(client, inst["token"], student["student_id"])
-    verifier = _register_verifier(client)
+    verifier = _register_verifier(client, db_session)
     _grant_access(
         db_session,
         student_id=student["student_id"],
@@ -263,10 +273,10 @@ def test_expired_share_is_unauthorized(client, db_session):
 
 
 def test_no_share_grant_is_unauthorized(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
     credential = _issue_credential(client, inst["token"], student["student_id"])
-    verifier = _register_verifier(client, email="bcv-no-access@test.credchain.dev")
+    verifier = _register_verifier(client, db_session, email="bcv-no-access@test.credchain.dev")
 
     resp = _verify(client, verifier["token"], credential["id"])
     assert resp.json()["result"] == "UNAUTHORIZED"

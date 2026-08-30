@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Inbox, Share2, AlertTriangle, GraduationCap, ShieldCheck } from 'lucide-react'
-import { getCompanyRequests, getCompanyShares } from '../../lib/api'
+import { Inbox, AlertTriangle, GraduationCap } from 'lucide-react'
+import { getCompanyRequests } from '../../lib/api'
 import { ApiError } from '../../lib/apiClient'
-import type { BackendCredentialRequest, BackendShareGrant, BackendRequestStatus, CredentialType } from '../../types'
+import type { BackendCredentialRequest, BackendRequestStatus, CredentialType } from '../../types'
 import { PageHeader, GlassPanel, Badge, Button, EmptyState, ErrorState } from '../../components/ui'
 import { SkeletonCard } from '../../components/ui/Skeleton'
+import { CredentialInbox } from './components/CredentialInbox'
 
 const REQUEST_STATUS_TONE: Record<BackendRequestStatus, 'good' | 'warn' | 'bad' | 'neutral'> = {
   pending: 'warn',
@@ -35,66 +36,35 @@ function looksLikeMismatch(requestedLabels: string[], credentialType: Credential
 
 export function VerifierRequests() {
   const [requests, setRequests] = useState<BackendCredentialRequest[]>([])
-  const [shares, setShares] = useState<BackendShareGrant[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    Promise.all([getCompanyRequests(), getCompanyShares()])
-      .then(([r, s]) => {
-        setRequests(r)
-        setShares(s)
-      })
+    getCompanyRequests()
+      .then(setRequests)
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load requests.'))
       .finally(() => setLoading(false))
   }, [])
-
-  if (loading) return <div className="space-y-4"><SkeletonCard lines={3} /><SkeletonCard lines={3} /></div>
 
   return (
     <div>
       <PageHeader title="Requests" eyebrow="Credential Requests" icon={Inbox} description="Credential requests you've sent, and credentials shared with you." />
 
-      {error && (
-        <div className="mb-5 max-w-2xl">
-          <ErrorState description={error} onRetry={() => window.location.reload()} />
-        </div>
-      )}
+      <div className="mb-8">
+        <CredentialInbox />
+      </div>
 
-      <h2 className="mb-3 text-[15px] font-bold text-ink">Shared With You</h2>
-      {shares.length === 0 ? (
-        <EmptyState icon={Share2} title="No shared credentials" description="No shared credentials available." />
+      {loading ? (
+        <div className="space-y-4"><SkeletonCard lines={3} /><SkeletonCard lines={3} /></div>
       ) : (
-        <div className="mb-8 max-w-2xl space-y-3">
-          {shares.flatMap((share) =>
-            share.credentials.map((c) => (
-              <GlassPanel key={`${share.id}-${c.id}`} className="flex items-center gap-4 p-4">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary-bg text-primary">
-                  <ShieldCheck className="h-5 w-5" strokeWidth={2} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-bold text-ink">{c.title}</p>
-                  <p className="text-xs text-muted">{c.institution_name}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-3">
-                  <Badge tone={share.status === 'active' ? 'good' : share.status === 'expired' ? 'warn' : 'bad'} size="sm">
-                    {share.status.toUpperCase()}
-                  </Badge>
-                  {share.status === 'active' && (
-                    <Link to={`/verifier/verify/${c.id}`}>
-                      <Button variant="outline" size="sm">
-                        Verify
-                      </Button>
-                    </Link>
-                  )}
-                </div>
-              </GlassPanel>
-            ))
+        <>
+          {error && (
+            <div className="mb-5 max-w-2xl">
+              <ErrorState description={error} onRetry={() => window.location.reload()} />
+            </div>
           )}
-        </div>
-      )}
 
-      <h2 className="mb-3 text-[15px] font-bold text-ink">Sent Requests</h2>
+          <h2 className="mb-3 text-[15px] font-bold text-ink">Sent Requests</h2>
       {requests.length === 0 ? (
         <EmptyState icon={Inbox} title="No requests yet" description="No requests yet." />
       ) : (
@@ -152,6 +122,8 @@ export function VerifierRequests() {
             </GlassPanel>
           ))}
         </div>
+      )}
+        </>
       )}
     </div>
   )

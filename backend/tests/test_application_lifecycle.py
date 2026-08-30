@@ -14,20 +14,32 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_verifier(client, email, name):
+def _register_verifier(client, db_session, email, name):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Lifecycle Verifier", "role": "verifier", "company_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Lifecycle Verifier", "role": "verifier", "company_id": str(company.id)},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     return {"token": body["access_token"], "company_id": body["user"]["company_id"]}
 
 
-def _register_institution(client, email, name):
+def _register_institution(client, db_session, email, name):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Lifecycle Inst", "role": "institution", "institution_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Lifecycle Inst", "role": "institution", "institution_id": str(institution.id)},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
@@ -76,9 +88,9 @@ def _create_open_job(client, verifier_token, **overrides):
     return job
 
 
-def _setup(client, suffix, **job_overrides):
-    verifier = _register_verifier(client, f"lc-co-{suffix}@test.credchain.dev", f"Lifecycle Co {suffix}")
-    inst = _register_institution(client, f"lc-inst-{suffix}@test.credchain.dev", f"Lifecycle Uni {suffix}")
+def _setup(client, db_session, suffix, **job_overrides):
+    verifier = _register_verifier(client, db_session, f"lc-co-{suffix}@test.credchain.dev", f"Lifecycle Co {suffix}")
+    inst = _register_institution(client, db_session, f"lc-inst-{suffix}@test.credchain.dev", f"Lifecycle Uni {suffix}")
     student = _register_student(client, inst["institution_id"], f"lc-stu-{suffix}@test.credchain.dev", f"LC-STU-{suffix}")
     job = _create_open_job(client, verifier["token"], **job_overrides)
     cred_id = _issue_credential(client, inst["token"], student["student_id"], "migration", "Migration Certificate")
@@ -101,7 +113,7 @@ def _apply(client, ctx):
 
 
 def test_rejecting_an_application_without_a_reason_is_rejected(client, db_session):
-    ctx = _setup(client, "1a")
+    ctx = _setup(client, db_session, "1a")
     app = _apply(client, ctx)
     resp = client.post(
         f"/api/companies/me/applications/{app['id']}/status",
@@ -112,7 +124,7 @@ def test_rejecting_an_application_without_a_reason_is_rejected(client, db_sessio
 
 
 def test_rejecting_an_application_with_a_reason_stores_and_returns_it(client, db_session):
-    ctx = _setup(client, "1b")
+    ctx = _setup(client, db_session, "1b")
     app = _apply(client, ctx)
     resp = client.post(
         f"/api/companies/me/applications/{app['id']}/status",
@@ -125,7 +137,7 @@ def test_rejecting_an_application_with_a_reason_stores_and_returns_it(client, db
 
 
 def test_student_sees_rejection_reason_on_their_own_application(client, db_session):
-    ctx = _setup(client, "1c")
+    ctx = _setup(client, db_session, "1c")
     app = _apply(client, ctx)
     client.post(
         f"/api/companies/me/applications/{app['id']}/status",
@@ -139,7 +151,7 @@ def test_student_sees_rejection_reason_on_their_own_application(client, db_sessi
 
 
 def test_rejection_reason_is_never_fabricated_when_still_pending(client, db_session):
-    ctx = _setup(client, "1d")
+    ctx = _setup(client, db_session, "1d")
     app = _apply(client, ctx)
     listed = client.get("/api/students/me/applications", headers=_auth_header(ctx["student"]["token"])).json()
     mine = next(a for a in listed if a["id"] == app["id"])
@@ -147,7 +159,7 @@ def test_rejection_reason_is_never_fabricated_when_still_pending(client, db_sess
 
 
 def test_shortlisting_does_not_require_or_accept_a_reason_as_mandatory(client, db_session):
-    ctx = _setup(client, "1e")
+    ctx = _setup(client, db_session, "1e")
     app = _apply(client, ctx)
     client.post(
         f"/api/companies/me/applications/{app['id']}/status",
@@ -169,7 +181,7 @@ def test_shortlisting_does_not_require_or_accept_a_reason_as_mandatory(client, d
 
 
 def test_student_can_withdraw_own_applied_application(client, db_session):
-    ctx = _setup(client, "2a")
+    ctx = _setup(client, db_session, "2a")
     app = _apply(client, ctx)
     resp = client.post(f"/api/students/me/applications/{app['id']}/withdraw", headers=_auth_header(ctx["student"]["token"]))
     assert resp.status_code == 200, resp.text
@@ -177,7 +189,7 @@ def test_student_can_withdraw_own_applied_application(client, db_session):
 
 
 def test_company_sees_withdrawn_status(client, db_session):
-    ctx = _setup(client, "2b")
+    ctx = _setup(client, db_session, "2b")
     app = _apply(client, ctx)
     client.post(f"/api/students/me/applications/{app['id']}/withdraw", headers=_auth_header(ctx["student"]["token"]))
     listed = client.get("/api/companies/me/applications", headers=_auth_header(ctx["verifier"]["token"])).json()
@@ -186,7 +198,7 @@ def test_company_sees_withdrawn_status(client, db_session):
 
 
 def test_cannot_withdraw_an_accepted_application(client, db_session):
-    ctx = _setup(client, "2c")
+    ctx = _setup(client, db_session, "2c")
     app = _apply(client, ctx)
     client.post(f"/api/companies/me/applications/{app['id']}/status", json={"status": "under_review"}, headers=_auth_header(ctx["verifier"]["token"]))
     client.post(f"/api/companies/me/applications/{app['id']}/status", json={"status": "shortlisted"}, headers=_auth_header(ctx["verifier"]["token"]))
@@ -197,7 +209,7 @@ def test_cannot_withdraw_an_accepted_application(client, db_session):
 
 
 def test_other_student_cannot_withdraw_someone_elses_application(client, db_session):
-    ctx = _setup(client, "2d")
+    ctx = _setup(client, db_session, "2d")
     app = _apply(client, ctx)
     other = _register_student(client, ctx["inst"]["institution_id"], "lc-other-2d@test.credchain.dev", "LC-OTHER-2d")
     resp = client.post(f"/api/students/me/applications/{app['id']}/withdraw", headers=_auth_header(other["token"]))
@@ -213,7 +225,7 @@ def test_application_after_deadline_is_rejected(client, db_session):
     from app.models.job import Job
     import uuid as uuid_mod
 
-    ctx = _setup(client, "3a")
+    ctx = _setup(client, db_session, "3a")
     job_row = db_session.get(Job, uuid_mod.UUID(ctx["job"]["id"]))
     job_row.application_deadline = datetime.now(timezone.utc) - timedelta(days=1)
     db_session.commit()
@@ -227,7 +239,7 @@ def test_application_after_deadline_is_rejected(client, db_session):
 
 
 def test_application_before_deadline_still_succeeds(client, db_session):
-    ctx = _setup(client, "3b", application_deadline=(datetime.now(timezone.utc) + timedelta(days=7)).isoformat())
+    ctx = _setup(client, db_session, "3b", application_deadline=(datetime.now(timezone.utc) + timedelta(days=7)).isoformat())
     resp = client.post(
         "/api/students/me/applications",
         json={"job_id": ctx["job"]["id"], "credential_ids": [ctx["cred_id"]]},

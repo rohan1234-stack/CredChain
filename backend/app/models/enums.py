@@ -14,6 +14,21 @@ class UserRole(str, enum.Enum):
     STUDENT = "student"
     INSTITUTION = "institution"
     VERIFIER = "verifier"
+    ADMIN = "admin"
+
+
+class VerificationStatus(str, enum.Enum):
+    """
+    Trust status of a REGISTERED institution/company account (Phase A). Meaningless for a
+    directory-only row (user_id IS NULL) — those never log in, never issue credentials, and
+    never publish jobs, so they simply carry the column's default and it's never surfaced to
+    anyone (see institution_service.to_response / company_service.to_response, which only
+    expose this field when is_registered is True).
+    """
+
+    PENDING = "pending"
+    VERIFIED = "verified"
+    REJECTED = "rejected"
 
 
 class CredentialType(str, enum.Enum):

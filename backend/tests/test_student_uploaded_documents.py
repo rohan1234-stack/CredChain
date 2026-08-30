@@ -15,10 +15,16 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_institution(client, email, name):
+def _register_institution(client, db_session, email, name):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Doc Inst Admin", "role": "institution", "institution_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Doc Inst Admin", "role": "institution", "institution_id": str(institution.id)},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
@@ -49,7 +55,7 @@ def _upload(client, token, institution_id, credential_type="migration", **overri
 
 
 def test_upload_starts_unverified(client, db_session):
-    inst = _register_institution(client, "doc-inst-1@test.credchain.dev", "Doc University 1")
+    inst = _register_institution(client, db_session, "doc-inst-1@test.credchain.dev", "Doc University 1")
     student = _register_student(client, inst["institution_id"], "doc-stu-1@test.credchain.dev", "DOC-STU-1")
 
     resp = _upload(client, student["token"], inst["institution_id"])
@@ -59,8 +65,8 @@ def test_upload_starts_unverified(client, db_session):
 
 
 def test_student_cannot_upload_for_unaffiliated_institution(client, db_session):
-    inst_a = _register_institution(client, "doc-inst-a@test.credchain.dev", "Doc University A")
-    inst_b = _register_institution(client, "doc-inst-b@test.credchain.dev", "Doc University B")
+    inst_a = _register_institution(client, db_session, "doc-inst-a@test.credchain.dev", "Doc University A")
+    inst_b = _register_institution(client, db_session, "doc-inst-b@test.credchain.dev", "Doc University B")
     student = _register_student(client, inst_a["institution_id"], "doc-stu-a@test.credchain.dev", "DOC-STU-A")
 
     resp = _upload(client, student["token"], inst_b["institution_id"])
@@ -69,7 +75,7 @@ def test_student_cannot_upload_for_unaffiliated_institution(client, db_session):
 
 def test_student_has_no_approve_or_reject_endpoint(client, db_session):
     """The structural enforcement: there is no student-facing approve/reject path at all, not just a hidden button."""
-    inst = _register_institution(client, "doc-inst-2@test.credchain.dev", "Doc University 2")
+    inst = _register_institution(client, db_session, "doc-inst-2@test.credchain.dev", "Doc University 2")
     student = _register_student(client, inst["institution_id"], "doc-stu-2@test.credchain.dev", "DOC-STU-2")
     doc_id = _upload(client, student["token"], inst["institution_id"]).json()["id"]
 
@@ -84,7 +90,7 @@ def test_student_has_no_approve_or_reject_endpoint(client, db_session):
 
 
 def test_institution_approval_creates_real_signed_credential(client, db_session):
-    inst = _register_institution(client, "doc-inst-3@test.credchain.dev", "Doc University 3")
+    inst = _register_institution(client, db_session, "doc-inst-3@test.credchain.dev", "Doc University 3")
     student = _register_student(client, inst["institution_id"], "doc-stu-3@test.credchain.dev", "DOC-STU-3")
     doc_id = _upload(client, student["token"], inst["institution_id"], credential_type="migration").json()["id"]
 
@@ -111,7 +117,7 @@ def test_institution_approval_creates_real_signed_credential(client, db_session)
 
 
 def test_rejected_document_never_becomes_a_credential(client, db_session):
-    inst = _register_institution(client, "doc-inst-4@test.credchain.dev", "Doc University 4")
+    inst = _register_institution(client, db_session, "doc-inst-4@test.credchain.dev", "Doc University 4")
     student = _register_student(client, inst["institution_id"], "doc-stu-4@test.credchain.dev", "DOC-STU-4")
     doc_id = _upload(client, student["token"], inst["institution_id"]).json()["id"]
 
@@ -140,9 +146,16 @@ def test_company_cannot_treat_unverified_upload_as_a_credential(client, db_sessi
     credential_id for it to be verified against until (and unless) it's
     approved and converted.
     """
-    inst = _register_institution(client, "doc-inst-5@test.credchain.dev", "Doc University 5")
+    inst = _register_institution(client, db_session, "doc-inst-5@test.credchain.dev", "Doc University 5")
     student = _register_student(client, inst["institution_id"], "doc-stu-5@test.credchain.dev", "DOC-STU-5")
     doc = _upload(client, student["token"], inst["institution_id"]).json()
+
+    from app.models.company import Company
+
+    verify_company = Company(name="Doc Verify Co")
+    db_session.add(verify_company)
+    db_session.commit()
+    db_session.refresh(verify_company)
 
     verifier_resp = client.post(
         "/api/auth/register",
@@ -151,7 +164,7 @@ def test_company_cannot_treat_unverified_upload_as_a_credential(client, db_sessi
             "password": "Password123",
             "full_name": "Doc Verifier",
             "role": "verifier",
-            "company_name": "Doc Verify Co",
+            "company_id": str(verify_company.id),
         },
     )
     verifier_token = verifier_resp.json()["access_token"]
@@ -178,7 +191,7 @@ def test_approval_with_academic_metadata_produces_trusted_credential(client, db_
     be ELIGIBLE, sourced entirely from the trusted credential, never from
     the PDF itself.
     """
-    inst = _register_institution(client, "doc-inst-6@test.credchain.dev", "Doc University 6")
+    inst = _register_institution(client, db_session, "doc-inst-6@test.credchain.dev", "Doc University 6")
     student = _register_student(client, inst["institution_id"], "doc-stu-6@test.credchain.dev", "DOC-STU-6")
     doc_id = _upload(client, student["token"], inst["institution_id"], credential_type="transcript").json()["id"]
 
@@ -197,6 +210,13 @@ def test_approval_with_academic_metadata_produces_trusted_credential(client, db_
     assert cred["cgpa"] == 9.6
 
     # Deterministic eligibility (unmodified) reads this trusted metadata correctly.
+    from app.models.company import Company
+
+    verify_company_2 = Company(name="Doc Verify Co 2")
+    db_session.add(verify_company_2)
+    db_session.commit()
+    db_session.refresh(verify_company_2)
+
     verifier_resp = client.post(
         "/api/auth/register",
         json={
@@ -204,7 +224,7 @@ def test_approval_with_academic_metadata_produces_trusted_credential(client, db_
             "password": "Password123",
             "full_name": "Doc Verifier 2",
             "role": "verifier",
-            "company_name": "Doc Verify Co 2",
+            "company_id": str(verify_company_2.id),
         },
     )
     verifier_token = verifier_resp.json()["access_token"]
@@ -232,7 +252,7 @@ def test_approval_with_academic_metadata_produces_trusted_credential(client, db_
 
 def test_approval_without_academic_metadata_stays_empty(client, db_session):
     """The optional fields really are optional — a certification/other document approved with no metadata still produces a valid credential, exactly as before."""
-    inst = _register_institution(client, "doc-inst-7@test.credchain.dev", "Doc University 7")
+    inst = _register_institution(client, db_session, "doc-inst-7@test.credchain.dev", "Doc University 7")
     student = _register_student(client, inst["institution_id"], "doc-stu-7@test.credchain.dev", "DOC-STU-7")
     doc_id = _upload(client, student["token"], inst["institution_id"], credential_type="certification").json()["id"]
 
@@ -248,7 +268,7 @@ def test_approval_without_academic_metadata_stays_empty(client, db_session):
 
 def test_approval_rejects_out_of_range_cgpa(client, db_session):
     """Approval-time metadata goes through the same range validation as direct issuance — not a separate, laxer path."""
-    inst = _register_institution(client, "doc-inst-8@test.credchain.dev", "Doc University 8")
+    inst = _register_institution(client, db_session, "doc-inst-8@test.credchain.dev", "Doc University 8")
     student = _register_student(client, inst["institution_id"], "doc-stu-8@test.credchain.dev", "DOC-STU-8")
     doc_id = _upload(client, student["token"], inst["institution_id"], credential_type="transcript").json()["id"]
 
@@ -261,8 +281,8 @@ def test_approval_rejects_out_of_range_cgpa(client, db_session):
 
 
 def test_cross_institution_cannot_see_or_review_documents(client, db_session):
-    inst_a = _register_institution(client, "doc-inst-xa@test.credchain.dev", "Doc University XA")
-    inst_b = _register_institution(client, "doc-inst-xb@test.credchain.dev", "Doc University XB")
+    inst_a = _register_institution(client, db_session, "doc-inst-xa@test.credchain.dev", "Doc University XA")
+    inst_b = _register_institution(client, db_session, "doc-inst-xb@test.credchain.dev", "Doc University XB")
     student = _register_student(client, inst_a["institution_id"], "doc-stu-xa@test.credchain.dev", "DOC-STU-XA")
     doc_id = _upload(client, student["token"], inst_a["institution_id"]).json()["id"]
 

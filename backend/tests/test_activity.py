@@ -26,8 +26,14 @@ def _register(client, *, role, email, **extra):
     return resp.json()
 
 
-def _register_institution(client, email="activity-inst@test.credchain.dev", name="Activity University"):
-    body = _register(client, role="institution", email=email, institution_name=name)
+def _register_institution(client, db_session, email="activity-inst@test.credchain.dev", name="Activity University"):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
+    body = _register(client, role="institution", email=email, institution_id=str(institution.id))
     return {"token": body["access_token"], "institution_id": body["user"]["institution_id"]}
 
 
@@ -42,8 +48,14 @@ def _register_student(client, db_session, institution_id, email="activity-studen
     return {"token": body["access_token"], "student_id": student_id}
 
 
-def _register_verifier(client, email="activity-verifier@test.credchain.dev", name="Activity Company"):
-    body = _register(client, role="verifier", email=email, company_name=name)
+def _register_verifier(client, db_session, email="activity-verifier@test.credchain.dev", name="Activity Company"):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
+    body = _register(client, role="verifier", email=email, company_id=str(company.id))
     return {"token": body["access_token"], "company_id": body["user"]["company_id"]}
 
 
@@ -67,7 +79,7 @@ def _issue(client, institution_token, student_id, **overrides) -> dict:
 
 def _setup(client, db_session):
     """Institution issues a credential to a student — produces one CREDENTIAL_ISSUED row."""
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
     credential = _issue(client, inst["token"], student["student_id"])
     return {"inst": inst, "student": student, "credential": credential}
@@ -80,7 +92,7 @@ def _full_flow(client, db_session):
     spec produces a real row to read back.
     """
     ctx = _setup(client, db_session)
-    verifier = _register_verifier(client)
+    verifier = _register_verifier(client, db_session)
 
     req_resp = client.post(
         "/api/credential-requests",
@@ -168,7 +180,7 @@ def test_institution_cannot_access_student_activity(client, db_session):
 
 def test_company_cannot_access_student_activity(client, db_session):
     ctx = _setup(client, db_session)
-    verifier = _register_verifier(client)
+    verifier = _register_verifier(client, db_session)
     resp = client.get("/api/students/me/activity", headers=_auth_header(verifier["token"]))
     assert resp.status_code == 403
 
@@ -187,7 +199,7 @@ def test_unauthenticated_activity_rejected(client, db_session):
 
 def test_student_a_cannot_see_student_b_activity(client, db_session):
     ctx_a = _setup(client, db_session)
-    inst_b = _register_institution(client, email="activity-inst-b@test.credchain.dev", name="Other University")
+    inst_b = _register_institution(client, db_session, email="activity-inst-b@test.credchain.dev", name="Other University")
     student_b = _register_student(
         client, db_session, inst_b["institution_id"], email="activity-student-b@test.credchain.dev", identifier="STU-ACT-002"
     )
@@ -207,7 +219,7 @@ def test_student_a_cannot_see_student_b_activity(client, db_session):
 
 def test_institution_a_cannot_see_institution_b_activity(client, db_session):
     ctx_a = _setup(client, db_session)
-    inst_b = _register_institution(client, email="activity-inst-c@test.credchain.dev", name="Third University")
+    inst_b = _register_institution(client, db_session, email="activity-inst-c@test.credchain.dev", name="Third University")
     student_b = _register_student(
         client, db_session, inst_b["institution_id"], email="activity-student-c@test.credchain.dev", identifier="STU-ACT-003"
     )
@@ -222,7 +234,7 @@ def test_institution_a_cannot_see_institution_b_activity(client, db_session):
 
 def test_company_a_cannot_see_company_b_activity(client, db_session):
     ctx = _full_flow(client, db_session)
-    verifier_b = _register_verifier(client, email="activity-verifier-b@test.credchain.dev", name="Other Company")
+    verifier_b = _register_verifier(client, db_session, email="activity-verifier-b@test.credchain.dev", name="Other Company")
 
     a_activity = client.get("/api/companies/me/activity", headers=_auth_header(ctx["verifier"]["token"])).json()
     b_activity = client.get("/api/companies/me/activity", headers=_auth_header(verifier_b["token"])).json()

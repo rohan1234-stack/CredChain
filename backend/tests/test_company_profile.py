@@ -8,10 +8,16 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_verifier(client, email, name):
+def _register_verifier(client, db_session, email, name):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Profile Verifier", "role": "verifier", "company_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Profile Verifier", "role": "verifier", "company_id": str(company.id)},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
@@ -19,7 +25,7 @@ def _register_verifier(client, email, name):
 
 
 def test_company_can_view_and_update_own_profile(client, db_session):
-    verifier = _register_verifier(client, "profile-co-1@test.credchain.dev", "Profile Co 1")
+    verifier = _register_verifier(client, db_session, "profile-co-1@test.credchain.dev", "Profile Co 1")
 
     me_resp = client.get("/api/companies/me", headers=_auth_header(verifier["token"]))
     assert me_resp.status_code == 200
@@ -40,7 +46,7 @@ def test_company_can_view_and_update_own_profile(client, db_session):
 
 
 def test_student_sees_real_company_list_and_detail_no_fabrication(client, db_session):
-    verifier = _register_verifier(client, "profile-co-2@test.credchain.dev", "Profile Co 2")
+    verifier = _register_verifier(client, db_session, "profile-co-2@test.credchain.dev", "Profile Co 2")
     client.patch("/api/companies/me", json={"description": "Real description"}, headers=_auth_header(verifier["token"]))
 
     list_resp = client.get("/api/companies")
@@ -55,8 +61,8 @@ def test_student_sees_real_company_list_and_detail_no_fabrication(client, db_ses
 
 
 def test_company_cannot_update_another_companys_profile(client, db_session):
-    verifier_a = _register_verifier(client, "profile-co-a@test.credchain.dev", "Profile Co A")
-    verifier_b = _register_verifier(client, "profile-co-b@test.credchain.dev", "Profile Co B")
+    verifier_a = _register_verifier(client, db_session, "profile-co-a@test.credchain.dev", "Profile Co A")
+    verifier_b = _register_verifier(client, db_session, "profile-co-b@test.credchain.dev", "Profile Co B")
 
     client.patch("/api/companies/me", json={"description": "Company A's real description"}, headers=_auth_header(verifier_a["token"]))
     # Company B updates its OWN profile — never A's, since there's no route that accepts a target company_id for writes.

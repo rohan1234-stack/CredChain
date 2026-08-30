@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { Briefcase, Building2, MapPin, Users, Globe, ArrowRight } from 'lucide-react'
+import { Briefcase, Building2, MapPin, Users, Globe, ArrowRight, ShieldCheck, Info } from 'lucide-react'
 import { getRealCompany, getOpenJobs } from '../../lib/api'
 import type { Company, Job } from '../../types'
-import { EmptyState, GlassPanel, Glow, IconTile } from '../../components/ui'
+import { EmptyState, GlassPanel, Glow, IconTile, Badge } from '../../components/ui'
 import { SkeletonCard } from '../../components/ui/Skeleton'
 
 /**
@@ -22,10 +22,10 @@ export function CompanyDetail() {
 
   useEffect(() => {
     if (!id) return
-    Promise.all([getRealCompany(id), getOpenJobs()])
-      .then(([c, allJobs]) => {
+    Promise.all([getRealCompany(id), getOpenJobs({ companyId: id })])
+      .then(([c, companyJobs]) => {
         setCompany(c)
-        setJobs(allJobs.filter((j) => j.company_id === id))
+        setJobs(companyJobs)
       })
       .finally(() => setLoading(false))
   }, [id])
@@ -50,11 +50,24 @@ export function CompanyDetail() {
             <p className="text-[11px] font-bold uppercase tracking-wider text-ai">Employer Profile</p>
             <h1 className="text-2xl font-bold tracking-tight text-ink font-[family-name:var(--font-display)]">{company.name}</h1>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-muted">
+              {company.is_registered && company.verification_status === 'verified' ? (
+                <Badge tone="good" size="sm">
+                  <ShieldCheck className="h-3 w-3" strokeWidth={2.5} /> Verified CredChain Employer
+                </Badge>
+              ) : company.is_registered ? (
+                <Badge tone="neutral" size="sm" withIcon={false}>
+                  Registered — Not Yet Verified
+                </Badge>
+              ) : (
+                <Badge tone="neutral" size="sm" withIcon={false}>
+                  External Company
+                </Badge>
+              )}
               {company.industry && (
                 <span className="flex items-center gap-1"><Briefcase className="h-3 w-3" strokeWidth={2} /> {company.industry}</span>
               )}
-              {company.location && (
-                <span className="flex items-center gap-1"><MapPin className="h-3 w-3" strokeWidth={2} /> {company.location}</span>
+              {(company.location || company.country) && (
+                <span className="flex items-center gap-1"><MapPin className="h-3 w-3" strokeWidth={2} /> {company.location ?? company.country}</span>
               )}
               {company.company_size && (
                 <span className="flex items-center gap-1"><Users className="h-3 w-3" strokeWidth={2} /> {company.company_size} employees</span>
@@ -64,12 +77,22 @@ export function CompanyDetail() {
         </div>
       </GlassPanel>
 
+      {!company.is_registered && (
+        <div className="mb-6 flex items-start gap-2.5 rounded-xl border border-line bg-canvas-2/50 px-4 py-3 text-[13px] text-muted">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-faint" strokeWidth={2} />
+          <p>
+            This is a discoverable directory listing, not a registered CredChain employer — it has no CredChain login and cannot
+            post jobs or receive applications through CredChain. Any open positions below are only ever real CredChain job postings.
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-5">
         <GlassPanel className="p-5">
           <h3 className="mb-3 text-sm font-bold text-ink">About</h3>
           <p className="text-[13px] leading-relaxed text-body">{company.description ?? 'This company has not added a description yet.'}</p>
           {company.website && (
-            <a href={company.website} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-semibold text-primary hover:underline">
+            <a href={company.website} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-semibold text-primary hover:underline">
               <Globe className="h-3.5 w-3.5" strokeWidth={2} /> {company.website}
             </a>
           )}

@@ -9,12 +9,16 @@ python-dotenv==1.1.1
 
 # Phase 3 — auth
 argon2-cffi==25.1.0
-pyjwt==2.10.1
+pyjwt==2.12.0
 email-validator==2.2.0
 
 # Phase 4 — credential issuance, signing, file upload
 cryptography==44.0.1
 python-multipart==0.0.20
+
+# Durable document storage (Supabase Storage) — replaces ephemeral local
+# filesystem storage for credential/student-document PDFs.
+supabase==2.31.0
 
 # Phase 7 — AI (student intelligence)
 anthropic==0.69.0

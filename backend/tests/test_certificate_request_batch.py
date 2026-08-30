@@ -15,10 +15,16 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_institution(client, email, name):
+def _register_institution(client, db_session, email, name):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Batch Inst Admin", "role": "institution", "institution_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Batch Inst Admin", "role": "institution", "institution_id": str(institution.id)},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
@@ -52,7 +58,7 @@ def _issue(client, inst_token, student_id, credential_type, title, fulfills_requ
 
 
 def test_single_document_batch_request(client, db_session):
-    inst = _register_institution(client, "batch-inst-1@test.credchain.dev", "Batch University 1")
+    inst = _register_institution(client, db_session, "batch-inst-1@test.credchain.dev", "Batch University 1")
     student = _register_student(client, inst["institution_id"], "batch-stu-1@test.credchain.dev", "BATCH-STU-1")
 
     resp = client.post(
@@ -69,7 +75,7 @@ def test_single_document_batch_request(client, db_session):
 
 
 def test_three_document_batch_request_shares_one_batch_id(client, db_session):
-    inst = _register_institution(client, "batch-inst-2@test.credchain.dev", "Batch University 2")
+    inst = _register_institution(client, db_session, "batch-inst-2@test.credchain.dev", "Batch University 2")
     student = _register_student(client, inst["institution_id"], "batch-stu-2@test.credchain.dev", "BATCH-STU-2")
 
     resp = client.post(
@@ -99,7 +105,7 @@ def test_three_document_batch_request_shares_one_batch_id(client, db_session):
 
 
 def test_mixed_fulfilled_unfulfilled_state_within_one_batch(client, db_session):
-    inst = _register_institution(client, "batch-inst-3@test.credchain.dev", "Batch University 3")
+    inst = _register_institution(client, db_session, "batch-inst-3@test.credchain.dev", "Batch University 3")
     student = _register_student(client, inst["institution_id"], "batch-stu-3@test.credchain.dev", "BATCH-STU-3")
 
     items = client.post(
@@ -134,7 +140,7 @@ def test_mixed_fulfilled_unfulfilled_state_within_one_batch(client, db_session):
 
 
 def test_rejecting_one_item_in_a_batch_does_not_affect_others(client, db_session):
-    inst = _register_institution(client, "batch-inst-4@test.credchain.dev", "Batch University 4")
+    inst = _register_institution(client, db_session, "batch-inst-4@test.credchain.dev", "Batch University 4")
     student = _register_student(client, inst["institution_id"], "batch-stu-4@test.credchain.dev", "BATCH-STU-4")
 
     items = client.post(
@@ -164,7 +170,7 @@ def test_rejecting_one_item_in_a_batch_does_not_affect_others(client, db_session
 
 
 def test_batch_request_requires_at_least_one_item(client, db_session):
-    inst = _register_institution(client, "batch-inst-5@test.credchain.dev", "Batch University 5")
+    inst = _register_institution(client, db_session, "batch-inst-5@test.credchain.dev", "Batch University 5")
     student = _register_student(client, inst["institution_id"], "batch-stu-5@test.credchain.dev", "BATCH-STU-5")
 
     resp = client.post(
@@ -176,8 +182,8 @@ def test_batch_request_requires_at_least_one_item(client, db_session):
 
 
 def test_batch_request_cross_institution_isolation(client, db_session):
-    inst_a = _register_institution(client, "batch-inst-6a@test.credchain.dev", "Batch University 6A")
-    inst_b = _register_institution(client, "batch-inst-6b@test.credchain.dev", "Batch University 6B")
+    inst_a = _register_institution(client, db_session, "batch-inst-6a@test.credchain.dev", "Batch University 6A")
+    inst_b = _register_institution(client, db_session, "batch-inst-6b@test.credchain.dev", "Batch University 6B")
     student_a = _register_student(client, inst_a["institution_id"], "batch-stu-6a@test.credchain.dev", "BATCH-STU-6A")
 
     # Student A cannot batch-request from institution B (not affiliated).

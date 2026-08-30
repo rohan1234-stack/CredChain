@@ -62,15 +62,15 @@ export function VerifierDashboard() {
 
       {/* Hero — Stitch's "Network Synced" illustrated panel, reproduced as CSS particle-web + glow */}
       <div
-        className="relative mb-6 flex aspect-[3/1] w-full items-center justify-center overflow-hidden rounded-xl border border-ai-line p-6"
+        className="relative mb-6 flex w-full items-center justify-center overflow-hidden rounded-xl border border-ai-line px-6 py-8"
         style={{ background: 'radial-gradient(ellipse at center, rgba(79,70,229,0.18) 0%, rgba(10,15,30,0.75) 70%)', backdropFilter: 'blur(20px)' }}
       >
         <div aria-hidden className="absolute -left-10 -top-10 h-48 w-48 rounded-full bg-ai/20 blur-[80px]" />
         <div aria-hidden className="absolute -bottom-10 -right-10 h-48 w-48 rounded-full bg-magenta/15 blur-[80px]" />
         <div aria-hidden className="absolute inset-0 bg-circuit-faint opacity-40" />
-        <div className="relative flex flex-col items-center gap-2 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-ai/10 text-ai shadow-[0_0_24px_rgba(167,139,250,0.5)]">
-            <ShieldCheck className="h-8 w-8" strokeWidth={2} />
+        <div className="relative flex flex-col items-center gap-2.5 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-ai/10 text-ai shadow-[0_0_24px_rgba(167,139,250,0.5)]">
+            <ShieldCheck className="h-7 w-7" strokeWidth={2} />
           </div>
           <p className="text-xl font-semibold text-ink">Network Synced</p>
           <p className="rounded-full border border-ai-line bg-ai-bg px-3 py-1 font-[family-name:var(--font-mono)] text-[13px] text-ai">

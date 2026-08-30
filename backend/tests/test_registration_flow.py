@@ -14,10 +14,19 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-# --- institution registration -------------------------------------------------
+# --- institution registration (canonical-directory claim model) -----------------
 
 
-def test_institution_registration_creates_profile_and_keypair(client, db_session):
+def test_institution_registration_claims_existing_directory_record_and_creates_keypair(client, db_session):
+    """
+    Institution signup no longer creates a new Institution row from typed text —
+    it must select an existing canonical directory record (by id) and claim it.
+    """
+    directory_row = Institution(name="Signup University", registration_number="REG-001")
+    db_session.add(directory_row)
+    db_session.commit()
+    db_session.refresh(directory_row)
+
     resp = client.post(
         "/api/auth/register",
         json={
@@ -25,24 +34,25 @@ def test_institution_registration_creates_profile_and_keypair(client, db_session
             "password": "Password123",
             "full_name": "Admin Contact",
             "role": "institution",
-            "institution_name": "Signup University",
-            "institution_registration_number": "REG-001",
+            "institution_id": str(directory_row.id),
         },
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["user"]["role"] == "institution"
     assert body["user"]["org_name"] == "Signup University"
-    assert body["user"]["institution_id"] is not None
+    assert body["user"]["institution_id"] == str(directory_row.id)
 
-    institution = db_session.query(Institution).filter(Institution.name == "Signup University").first()
-    assert institution is not None
-    assert institution.registration_number == "REG-001"
+    # Exactly the same canonical row was claimed — no duplicate was created.
+    matches = db_session.query(Institution).filter(Institution.name == "Signup University").all()
+    assert len(matches) == 1
+    assert matches[0].id == directory_row.id
+    assert str(matches[0].user_id) == body["user"]["id"]
     # ensure_institution_keypair runs synchronously during registration.
-    assert institution.public_key is not None
+    assert matches[0].public_key is not None
 
 
-def test_institution_registration_missing_name_rejected(client):
+def test_institution_registration_missing_institution_id_rejected(client):
     resp = client.post(
         "/api/auth/register",
         json={
@@ -55,10 +65,68 @@ def test_institution_registration_missing_name_rejected(client):
     assert resp.status_code == 422
 
 
-# --- company registration -------------------------------------------------------
+def test_institution_registration_unknown_institution_id_is_404(client):
+    resp = client.post(
+        "/api/auth/register",
+        json={
+            "email": "signup-inst-unknown@test.credchain.dev",
+            "password": "Password123",
+            "full_name": "Admin Contact",
+            "role": "institution",
+            "institution_id": "00000000-0000-0000-0000-000000000000",
+        },
+    )
+    assert resp.status_code == 404
 
 
-def test_company_registration_creates_profile(client, db_session):
+def test_institution_registration_already_claimed_institution_is_rejected(client, db_session):
+    """Two different accounts must never both end up owning the same canonical Institution row."""
+    directory_row = Institution(name="Already Claimed University")
+    db_session.add(directory_row)
+    db_session.commit()
+    db_session.refresh(directory_row)
+
+    first = client.post(
+        "/api/auth/register",
+        json={
+            "email": "first-claim@test.credchain.dev",
+            "password": "Password123",
+            "full_name": "First Admin",
+            "role": "institution",
+            "institution_id": str(directory_row.id),
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    second = client.post(
+        "/api/auth/register",
+        json={
+            "email": "second-claim@test.credchain.dev",
+            "password": "Password123",
+            "full_name": "Second Admin",
+            "role": "institution",
+            "institution_id": str(directory_row.id),
+        },
+    )
+    assert second.status_code == 409
+    # Never overwritten — the row still belongs to whoever claimed it first.
+    db_session.refresh(directory_row)
+    assert str(directory_row.user_id) == first.json()["user"]["id"]
+
+    # Still exactly one Institution row with this name — the rejected second attempt
+    # must not have created a duplicate.
+    assert db_session.query(Institution).filter(Institution.name == "Already Claimed University").count() == 1
+
+
+# --- company registration (canonical-directory claim model) ---------------------
+
+
+def test_company_registration_claims_existing_directory_record(client, db_session):
+    directory_row = Company(name="Signup Technologies", industry="Software", website="https://signup.example.com")
+    db_session.add(directory_row)
+    db_session.commit()
+    db_session.refresh(directory_row)
+
     resp = client.post(
         "/api/auth/register",
         json={
@@ -66,24 +134,24 @@ def test_company_registration_creates_profile(client, db_session):
             "password": "Password123",
             "full_name": "HR Contact",
             "role": "verifier",
-            "company_name": "Signup Technologies",
-            "company_industry": "Software",
-            "company_website": "https://signup.example.com",
+            "company_id": str(directory_row.id),
         },
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["user"]["role"] == "verifier"
     assert body["user"]["org_name"] == "Signup Technologies"
-    assert body["user"]["company_id"] is not None
+    assert body["user"]["company_id"] == str(directory_row.id)
 
-    company = db_session.query(Company).filter(Company.name == "Signup Technologies").first()
-    assert company is not None
-    assert company.industry == "Software"
-    assert company.website == "https://signup.example.com"
+    matches = db_session.query(Company).filter(Company.name == "Signup Technologies").all()
+    assert len(matches) == 1
+    assert matches[0].id == directory_row.id
+    assert str(matches[0].user_id) == body["user"]["id"]
+    assert matches[0].industry == "Software"
+    assert matches[0].website == "https://signup.example.com"
 
 
-def test_company_registration_missing_name_rejected(client):
+def test_company_registration_missing_company_id_rejected(client):
     resp = client.post(
         "/api/auth/register",
         json={
@@ -94,6 +162,40 @@ def test_company_registration_missing_name_rejected(client):
         },
     )
     assert resp.status_code == 422
+
+
+def test_company_registration_already_claimed_company_is_rejected(client, db_session):
+    directory_row = Company(name="Already Claimed Technologies")
+    db_session.add(directory_row)
+    db_session.commit()
+    db_session.refresh(directory_row)
+
+    first = client.post(
+        "/api/auth/register",
+        json={
+            "email": "first-co-claim@test.credchain.dev",
+            "password": "Password123",
+            "full_name": "First HR",
+            "role": "verifier",
+            "company_id": str(directory_row.id),
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    second = client.post(
+        "/api/auth/register",
+        json={
+            "email": "second-co-claim@test.credchain.dev",
+            "password": "Password123",
+            "full_name": "Second HR",
+            "role": "verifier",
+            "company_id": str(directory_row.id),
+        },
+    )
+    assert second.status_code == 409
+    db_session.refresh(directory_row)
+    assert str(directory_row.user_id) == first.json()["user"]["id"]
+    assert db_session.query(Company).filter(Company.name == "Already Claimed Technologies").count() == 1
 
 
 # --- registration establishes a real, immediately-usable session ----------------
@@ -175,7 +277,7 @@ def test_registering_twice_with_different_role_is_rejected(client):
 
     second = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Test", "role": "institution", "institution_name": "Sneaky U"},
+        json={"email": email, "password": "Password123", "full_name": "Test", "role": "institution"},
     )
     assert second.status_code == 409
 

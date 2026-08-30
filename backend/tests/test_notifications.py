@@ -11,10 +11,16 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_institution(client, email, name):
+def _register_institution(client, db_session, email, name):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Notif Inst", "role": "institution", "institution_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Notif Inst", "role": "institution", "institution_id": str(institution.id)},
     )
     body = resp.json()
     return {"token": body["access_token"], "institution_id": body["user"]["institution_id"]}
@@ -36,16 +42,22 @@ def _register_student(client, institution_id, email, identifier):
     return {"token": body["access_token"], "student_id": body["user"]["student_id"]}
 
 
-def _register_verifier(client, email, name):
+def _register_verifier(client, db_session, email, name):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Notif Verifier", "role": "verifier", "company_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Notif Verifier", "role": "verifier", "company_id": str(company.id)},
     )
     return {"token": resp.json()["access_token"]}
 
 
 def test_institution_pending_certificate_request_count_is_real_and_clears_on_approval(client, db_session):
-    inst = _register_institution(client, "notif-inst-1@test.credchain.dev", "Notif University 1")
+    inst = _register_institution(client, db_session, "notif-inst-1@test.credchain.dev", "Notif University 1")
     student = _register_student(client, inst["institution_id"], "notif-stu-1@test.credchain.dev", "NOTIF-STU-1")
 
     counts = client.get("/api/notifications/me/counts", headers=_auth_header(inst["token"])).json()
@@ -67,7 +79,7 @@ def test_institution_pending_certificate_request_count_is_real_and_clears_on_app
 
 
 def test_institution_pending_document_review_count_is_real_and_clears_on_review(client, db_session):
-    inst = _register_institution(client, "notif-inst-2@test.credchain.dev", "Notif University 2")
+    inst = _register_institution(client, db_session, "notif-inst-2@test.credchain.dev", "Notif University 2")
     student = _register_student(client, inst["institution_id"], "notif-stu-2@test.credchain.dev", "NOTIF-STU-2")
 
     files = {"document": ("d.pdf", SAMPLE_PDF_BYTES, "application/pdf")}
@@ -88,9 +100,9 @@ def test_institution_pending_document_review_count_is_real_and_clears_on_review(
 
 
 def test_student_pending_company_request_count_is_real(client, db_session):
-    inst = _register_institution(client, "notif-inst-3@test.credchain.dev", "Notif University 3")
+    inst = _register_institution(client, db_session, "notif-inst-3@test.credchain.dev", "Notif University 3")
     student = _register_student(client, inst["institution_id"], "notif-stu-3@test.credchain.dev", "NOTIF-STU-3")
-    verifier = _register_verifier(client, "notif-verifier-1@test.credchain.dev", "Notif Co 1")
+    verifier = _register_verifier(client, db_session, "notif-verifier-1@test.credchain.dev", "Notif Co 1")
 
     counts = client.get("/api/notifications/me/counts", headers=_auth_header(student["token"])).json()
     assert counts["pending_company_requests"] == 0
@@ -106,8 +118,8 @@ def test_student_pending_company_request_count_is_real(client, db_session):
 
 
 def test_cross_institution_notification_counts_are_isolated(client, db_session):
-    inst_a = _register_institution(client, "notif-inst-xa@test.credchain.dev", "Notif University XA")
-    inst_b = _register_institution(client, "notif-inst-xb@test.credchain.dev", "Notif University XB")
+    inst_a = _register_institution(client, db_session, "notif-inst-xa@test.credchain.dev", "Notif University XA")
+    inst_b = _register_institution(client, db_session, "notif-inst-xb@test.credchain.dev", "Notif University XB")
     student = _register_student(client, inst_a["institution_id"], "notif-stu-xa@test.credchain.dev", "NOTIF-STU-XA")
 
     client.post(

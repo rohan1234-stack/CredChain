@@ -16,6 +16,7 @@ const ROLE_HOME: Record<Role, string> = {
   student: '/student',
   institution: '/institution',
   verifier: '/verifier',
+  admin: '/admin',
 }
 
 export function ProtectedRoute({ role }: { role: Role }) {

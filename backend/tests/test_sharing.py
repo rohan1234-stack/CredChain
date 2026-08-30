@@ -30,8 +30,14 @@ def _register(client, *, role, email, **extra):
     return resp.json()
 
 
-def _register_institution(client, email="inst@test.credchain.dev", name="Test University"):
-    body = _register(client, role="institution", email=email, institution_name=name)
+def _register_institution(client, db_session, email="inst@test.credchain.dev", name="Test University"):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
+    body = _register(client, role="institution", email=email, institution_id=str(institution.id))
     return {"token": body["access_token"], "institution_id": body["user"]["institution_id"]}
 
 
@@ -46,8 +52,14 @@ def _register_student(client, db_session, institution_id, email="student@test.cr
     return {"token": body["access_token"], "student_id": student_id}
 
 
-def _register_verifier(client, email="verifier@test.credchain.dev", name="Test Company"):
-    body = _register(client, role="verifier", email=email, company_name=name)
+def _register_verifier(client, db_session, email="verifier@test.credchain.dev", name="Test Company"):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
+    body = _register(client, role="verifier", email=email, company_id=str(company.id))
     return {"token": body["access_token"], "company_id": body["user"]["company_id"]}
 
 
@@ -87,11 +99,11 @@ def _issue_credential_no_cgpa(client, institution_token, student_id) -> dict:
 
 def _full_setup(client, db_session):
     """Institution + student with TWO credentials (degree, transcript) + verifier, no request/share yet."""
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
     degree = _issue_credential_no_cgpa(client, inst["token"], student["student_id"])
     transcript = _issue_credential(client, inst["token"], student["student_id"])
-    verifier = _register_verifier(client)
+    verifier = _register_verifier(client, db_session)
     return {"inst": inst, "student": student, "degree": degree, "transcript": transcript, "verifier": verifier}
 
 
@@ -432,7 +444,7 @@ def test_company_a_cannot_use_company_bs_share(client, db_session):
     req = _create_request(client, ctx["verifier"]["token"], ctx["student"]["student_id"])
     _approve(client, ctx["student"]["token"], req["id"], [ctx["degree"]["id"]])
 
-    company_b = _register_verifier(client, email="companyb@test.credchain.dev", name="Company B")
+    company_b = _register_verifier(client, db_session, email="companyb@test.credchain.dev", name="Company B")
     resp = client.post(
         "/api/verification/verify",
         json={"credential_id": ctx["degree"]["id"]},
@@ -601,7 +613,7 @@ def test_critical_end_to_end_flow(client, db_session):
 
 
 def test_critical_privacy_selective_disclosure(client, db_session):
-    inst = _register_institution(client, email="privacy-inst@test.credchain.dev", name="Privacy University")
+    inst = _register_institution(client, db_session, email="privacy-inst@test.credchain.dev", name="Privacy University")
     student = _register_student(
         client, db_session, inst["institution_id"], email="privacy-student@test.credchain.dev", identifier="STU-PRIV"
     )
@@ -610,7 +622,7 @@ def test_critical_privacy_selective_disclosure(client, db_session):
     migration = _issue_credential_field_free(client, inst["token"], student["student_id"], "migration", "Migration Certificate")
     internship = _issue_credential_field_free(client, inst["token"], student["student_id"], "internship", "Internship Certificate")
 
-    verifier = _register_verifier(client, email="privacy-verifier@test.credchain.dev", name="Privacy Corp")
+    verifier = _register_verifier(client, db_session, email="privacy-verifier@test.credchain.dev", name="Privacy Corp")
 
     req = _create_request(
         client, verifier["token"], student["student_id"], requested=("Degree", "Final Transcript"), purpose="Hiring"
@@ -641,3 +653,152 @@ def _issue_credential_field_free(client, institution_token, student_id, credenti
     )
     assert resp.status_code == 201, resp.text
     return resp.json()
+
+
+# =====================================================================
+# SHARE REVOKE NOTIFICATIONS
+# ---------------------------------------------------------------------
+# revoke_share() already wrote a SHARE_REVOKED ActivityLog row before this
+# fix; it now also creates exactly one Notification for the affected
+# registered company, in the same transaction, reusing the notification
+# infrastructure already used by CREDENTIAL_SHARED and friends.
+# =====================================================================
+
+
+def _unread_count(client, token):
+    resp = client.get("/api/notifications/me/unread-count", headers=_auth_header(token))
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def _notifications(client, token):
+    resp = client.get("/api/notifications/me", headers=_auth_header(token))
+    assert resp.status_code == 200, resp.text
+    return resp.json()["items"]
+
+
+def test_revoking_share_notifies_company_a_exactly_once(client, db_session):
+    ctx = _full_setup(client, db_session)
+    req = _create_request(client, ctx["verifier"]["token"], ctx["student"]["student_id"])
+    share = _approve(client, ctx["student"]["token"], req["id"], [ctx["degree"]["id"]]).json()
+
+    before = _unread_count(client, ctx["verifier"]["token"])
+    resp = client.post(f"/api/shares/{share['share']['id']}/revoke", headers=_auth_header(ctx["student"]["token"]))
+    assert resp.status_code == 200
+
+    after = _unread_count(client, ctx["verifier"]["token"])
+    assert after == before + 1
+
+    revoke_notifications = [n for n in _notifications(client, ctx["verifier"]["token"]) if n["title"] == "Credential Share Revoked"]
+    assert len(revoke_notifications) == 1
+    notif = revoke_notifications[0]
+    assert notif["link_entity_type"] == "share_grant"
+    assert notif["link_entity_id"] == share["share"]["id"]
+
+
+def test_revoking_share_does_not_notify_an_unrelated_company(client, db_session):
+    ctx = _full_setup(client, db_session)
+    other_verifier = _register_verifier(client, db_session, email="unrelated-verifier@test.credchain.dev", name="Unrelated Co")
+
+    req = _create_request(client, ctx["verifier"]["token"], ctx["student"]["student_id"])
+    share = _approve(client, ctx["student"]["token"], req["id"], [ctx["degree"]["id"]]).json()
+
+    before = _unread_count(client, other_verifier["token"])
+    client.post(f"/api/shares/{share['share']['id']}/revoke", headers=_auth_header(ctx["student"]["token"]))
+    after = _unread_count(client, other_verifier["token"])
+
+    assert after == before == 0
+    assert _notifications(client, other_verifier["token"]) == []
+
+
+def test_revoke_notification_belongs_to_company_as_own_user(client, db_session):
+    from app.models.notification import Notification
+
+    ctx = _full_setup(client, db_session)
+    req = _create_request(client, ctx["verifier"]["token"], ctx["student"]["student_id"])
+    share = _approve(client, ctx["student"]["token"], req["id"], [ctx["degree"]["id"]]).json()
+    client.post(f"/api/shares/{share['share']['id']}/revoke", headers=_auth_header(ctx["student"]["token"]))
+
+    from app.models.user import User
+
+    company_user_id = db_session.query(User).filter(User.email == "verifier@test.credchain.dev").first().id
+    row = db_session.query(Notification).filter(Notification.title == "Credential Share Revoked").first()
+    assert row is not None
+    assert row.user_id == company_user_id
+
+
+def test_directory_only_company_share_revoke_creates_no_notification(client, db_session):
+    import hashlib
+
+    from app.models.company import Company
+    from app.models.notification import Notification
+    from app.models.share_grant import ShareGrant, ShareGrantCredential
+
+    ctx = _full_setup(client, db_session)
+
+    directory_company = Company(name="Directory Only Co")
+    db_session.add(directory_company)
+    db_session.commit()
+    db_session.refresh(directory_company)
+    assert directory_company.user_id is None
+
+    grant = ShareGrant(
+        student_id=uuid.UUID(ctx["student"]["student_id"]),
+        company_id=directory_company.id,
+        share_token_hash=hashlib.sha256(uuid.uuid4().hex.encode()).hexdigest(),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+    )
+    db_session.add(grant)
+    db_session.commit()
+    db_session.refresh(grant)
+    db_session.add(ShareGrantCredential(share_grant_id=grant.id, credential_id=uuid.UUID(ctx["degree"]["id"])))
+    db_session.commit()
+
+    resp = client.post(f"/api/shares/{grant.id}/revoke", headers=_auth_header(ctx["student"]["token"]))
+    assert resp.status_code == 200
+
+    assert db_session.query(Notification).filter(Notification.link_entity_id == grant.id).count() == 0
+
+
+def test_revoke_still_makes_access_unauthorized_and_keeps_activity_log(client, db_session):
+    ctx = _full_setup(client, db_session)
+    req = _create_request(client, ctx["verifier"]["token"], ctx["student"]["student_id"])
+    share = _approve(client, ctx["student"]["token"], req["id"], [ctx["degree"]["id"]]).json()
+
+    client.post(f"/api/shares/{share['share']['id']}/revoke", headers=_auth_header(ctx["student"]["token"]))
+
+    verify_resp = client.post(
+        "/api/verification/verify", json={"credential_id": ctx["degree"]["id"]}, headers=_auth_header(ctx["verifier"]["token"])
+    )
+    assert verify_resp.json()["result"] == "UNAUTHORIZED"
+
+    activity = client.get("/api/students/me/activity", headers=_auth_header(ctx["student"]["token"])).json()
+    assert any(row["action"] == "SHARE_REVOKED" for row in activity)
+
+
+def test_revoke_notification_contains_no_token_or_hash_material(client, db_session):
+    ctx = _full_setup(client, db_session)
+    req = _create_request(client, ctx["verifier"]["token"], ctx["student"]["student_id"])
+    share = _approve(client, ctx["student"]["token"], req["id"], [ctx["degree"]["id"]]).json()
+    raw_token = share["share_token"]
+
+    client.post(f"/api/shares/{share['share']['id']}/revoke", headers=_auth_header(ctx["student"]["token"]))
+
+    notif = next(n for n in _notifications(client, ctx["verifier"]["token"]) if n["title"] == "Credential Share Revoked")
+    assert set(notif.keys()) == {"id", "title", "message", "link_entity_type", "link_entity_id", "is_read", "read_at", "created_at"}
+    assert raw_token not in notif["message"]
+    assert raw_token not in notif["title"]
+
+
+def test_duplicate_revoke_attempt_does_not_create_a_second_notification(client, db_session):
+    ctx = _full_setup(client, db_session)
+    req = _create_request(client, ctx["verifier"]["token"], ctx["student"]["student_id"])
+    share = _approve(client, ctx["student"]["token"], req["id"], [ctx["degree"]["id"]]).json()
+
+    first = client.post(f"/api/shares/{share['share']['id']}/revoke", headers=_auth_header(ctx["student"]["token"]))
+    assert first.status_code == 200
+    second = client.post(f"/api/shares/{share['share']['id']}/revoke", headers=_auth_header(ctx["student"]["token"]))
+    assert second.status_code == 409
+
+    revoke_notifications = [n for n in _notifications(client, ctx["verifier"]["token"]) if n["title"] == "Credential Share Revoked"]
+    assert len(revoke_notifications) == 1

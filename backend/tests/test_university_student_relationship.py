@@ -27,8 +27,14 @@ def _register(client, *, role, email, **extra):
     return resp
 
 
-def _register_institution(client, email="usr-inst@test.credchain.dev", name="USR University"):
-    resp = _register(client, role="institution", email=email, institution_name=name)
+def _register_institution(client, db_session, email="usr-inst@test.credchain.dev", name="USR University"):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
+    resp = _register(client, role="institution", email=email, institution_id=str(institution.id))
     assert resp.status_code == 201, resp.text
     body = resp.json()
     return {"token": body["access_token"], "institution_id": body["user"]["institution_id"]}
@@ -38,7 +44,7 @@ def _register_institution(client, email="usr-inst@test.credchain.dev", name="USR
 
 
 def test_institution_list_is_public_and_shows_real_institutions(client, db_session):
-    inst = _register_institution(client, email="usr-inst-list@test.credchain.dev", name="USR Listed University")
+    inst = _register_institution(client, db_session, email="usr-inst-list@test.credchain.dev", name="USR Listed University")
     resp = client.get("/api/institutions")  # no auth header at all
     assert resp.status_code == 200
     names = [i["name"] for i in resp.json()]
@@ -51,7 +57,7 @@ def test_institution_list_is_public_and_shows_real_institutions(client, db_sessi
 
 
 def test_student_can_register_with_institution_and_it_is_immediately_visible(client, db_session):
-    inst = _register_institution(client, email="usr-inst-a@test.credchain.dev", name="USR University A")
+    inst = _register_institution(client, db_session, email="usr-inst-a@test.credchain.dev", name="USR University A")
 
     resp = _register(
         client,
@@ -95,7 +101,7 @@ def test_student_without_institution_registers_successfully_and_shows_unlinked(c
 
 
 def test_student_can_link_institution_after_registration(client, db_session):
-    inst = _register_institution(client, email="usr-inst-b@test.credchain.dev", name="USR University B")
+    inst = _register_institution(client, db_session, email="usr-inst-b@test.credchain.dev", name="USR University B")
     student_resp = _register(client, role="student", email="usr-student-b@test.credchain.dev", student_identifier="USR-STU-B")
     student_token = student_resp.json()["access_token"]
 
@@ -135,7 +141,7 @@ def test_link_to_nonexistent_institution_is_rejected(client, db_session):
 
 
 def test_link_institution_requires_student_role(client, db_session):
-    inst = _register_institution(client, email="usr-inst-d@test.credchain.dev", name="USR University D")
+    inst = _register_institution(client, db_session, email="usr-inst-d@test.credchain.dev", name="USR University D")
     resp = client.post(
         "/api/students/me/institution",
         json={"institution_id": inst["institution_id"]},
@@ -145,7 +151,7 @@ def test_link_institution_requires_student_role(client, db_session):
 
 
 def test_link_institution_requires_authentication(client, db_session):
-    inst = _register_institution(client, email="usr-inst-e@test.credchain.dev", name="USR University E")
+    inst = _register_institution(client, db_session, email="usr-inst-e@test.credchain.dev", name="USR University E")
     resp = client.post("/api/students/me/institution", json={"institution_id": inst["institution_id"]})
     assert resp.status_code == 401
 
@@ -154,7 +160,7 @@ def test_link_institution_requires_authentication(client, db_session):
 
 
 def test_issue_credential_to_newly_linked_student_succeeds(client, db_session):
-    inst = _register_institution(client, email="usr-inst-f@test.credchain.dev", name="USR University F")
+    inst = _register_institution(client, db_session, email="usr-inst-f@test.credchain.dev", name="USR University F")
     student_resp = _register(
         client, role="student", email="usr-student-f@test.credchain.dev", student_identifier="USR-STU-F",
         institution_id=inst["institution_id"],
@@ -172,8 +178,8 @@ def test_issue_credential_to_newly_linked_student_succeeds(client, db_session):
 
 
 def test_issue_credential_to_student_linked_elsewhere_is_rejected(client, db_session):
-    inst_a = _register_institution(client, email="usr-inst-g@test.credchain.dev", name="USR University G")
-    inst_b = _register_institution(client, email="usr-inst-h@test.credchain.dev", name="USR University H")
+    inst_a = _register_institution(client, db_session, email="usr-inst-g@test.credchain.dev", name="USR University G")
+    inst_b = _register_institution(client, db_session, email="usr-inst-h@test.credchain.dev", name="USR University H")
     student_resp = _register(
         client, role="student", email="usr-student-g@test.credchain.dev", student_identifier="USR-STU-G",
         institution_id=inst_b["institution_id"],  # linked to B

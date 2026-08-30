@@ -35,8 +35,14 @@ def _register(client, *, role, email, **extra):
     return resp.json()
 
 
-def _register_institution(client, email="inst@test.credchain.dev", name="Test University"):
-    body = _register(client, role="institution", email=email, institution_name=name)
+def _register_institution(client, db_session, email="inst@test.credchain.dev", name="Test University"):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
+    body = _register(client, role="institution", email=email, institution_id=str(institution.id))
     return {"token": body["access_token"], "institution_id": body["user"]["institution_id"]}
 
 
@@ -49,8 +55,14 @@ def _register_student(client, db_session, institution_id, email="student@test.cr
     return {"token": body["access_token"], "student_id": student_id}
 
 
-def _register_verifier(client, email="verifier@test.credchain.dev", name="Test Company"):
-    body = _register(client, role="verifier", email=email, company_name=name)
+def _register_verifier(client, db_session, email="verifier@test.credchain.dev", name="Test Company"):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
+    body = _register(client, role="verifier", email=email, company_id=str(company.id))
     return {"token": body["access_token"], "company_id": body["user"]["company_id"]}
 
 
@@ -97,10 +109,10 @@ def _verify(client, verifier_token, credential_id, demo_cgpa_override=None):
 
 def _setup(client, db_session):
     """Common fixture-free setup: institution + student + issued credential + verifier + authorization grant."""
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
     credential = _issue_credential(client, inst["token"], student["student_id"])
-    verifier = _register_verifier(client)
+    verifier = _register_verifier(client, db_session)
     _grant_access(
         db_session, student_id=student["student_id"], company_id=verifier["company_id"], credential_id=credential["id"]
     )
@@ -252,10 +264,10 @@ def test_expired_credential_is_expired(client, db_session):
 
 
 def test_unauthorized_verifier_gets_unauthorized_result(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
     credential = _issue_credential(client, inst["token"], student["student_id"])
-    verifier = _register_verifier(client, email="no-access@test.credchain.dev")
+    verifier = _register_verifier(client, db_session, email="no-access@test.credchain.dev")
     # deliberately no _grant_access call
 
     resp = _verify(client, verifier["token"], credential["id"])
@@ -278,7 +290,7 @@ def test_non_verifier_role_returns_403(client, db_session):
 
 
 def test_not_found_credential(client, db_session):
-    verifier = _register_verifier(client, email="nf@test.credchain.dev")
+    verifier = _register_verifier(client, db_session, email="nf@test.credchain.dev")
     resp = _verify(client, verifier["token"], str(uuid.uuid4()))
     assert resp.status_code == 200
     assert resp.json()["result"] == "NOT_FOUND"

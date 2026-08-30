@@ -92,6 +92,7 @@ export function InstitutionCredentialsList() {
   useEffect(() => {
     getIssuedCredentials()
       .then(setCredentials)
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Unable to load credentials. Please try again.'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -139,7 +140,7 @@ export function InstitutionCredentialsList() {
       {error && <div className="mb-4 max-w-2xl rounded-lg bg-bad-bg px-3.5 py-2.5 text-[13px] text-bad">{error}</div>}
 
       {credentials.length === 0 ? (
-        <EmptyState icon={FileText} title="No credentials issued yet" description="Credentials you issue will be listed here as a real, auditable registry." />
+        !error && <EmptyState icon={FileText} title="No credentials issued yet" description="Credentials you issue will be listed here as a real, auditable registry." />
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {credentials.map((c) => (

@@ -18,11 +18,11 @@ from sqlalchemy.orm import Session
 from ..models.activity_log import ActivityLog
 from ..models.credential import Credential
 from ..models.credential_document import CredentialDocument
-from ..models.enums import CredentialStatus, CredentialType
+from ..models.enums import CredentialStatus, CredentialType, VerificationStatus
 from ..models.institution import Institution
 from ..models.student import Student
 from ..schemas.credential import CredentialResponse
-from . import document_service, signing_service
+from . import document_service, notification_service, signing_service
 from .credential_payload import build_canonical_credential_payload, canonicalize_credential_payload
 
 MIN_CGPA, MAX_CGPA = 0, 10
@@ -51,6 +51,20 @@ class CredentialNotOwnedError(Exception):
 
 class CredentialAlreadyRevokedError(Exception):
     pass
+
+
+class InstitutionNotVerifiedError(Exception):
+    """
+    Raised by issue_signed_credential — the single real chokepoint every issuance path converges
+    on (direct issuance, bulk issuance, and student_document_service.approve_document all call
+    this function) — when the issuing institution's account is not VERIFIED. Carries the actual
+    status so callers can give a specific, honest message (pending vs. rejected) rather than a
+    generic "forbidden".
+    """
+
+    def __init__(self, status: VerificationStatus) -> None:
+        self.status = status
+        super().__init__(f"institution verification status is {status.value}, not verified")
 
 
 def _validate_fields(title: str, graduation_year: int | None, cgpa: float | None) -> None:
@@ -85,7 +99,13 @@ def issue_signed_credential(
     already-validated document bytes — callers are responsible for that
     (see document_service.read_and_validate_pdf) since the source differs
     (a fresh UploadFile vs. bytes already on disk from a prior upload).
+
+    Phase A: refuses to mint anything unless the institution's account is VERIFIED — the one
+    real gate every issuance path (single, bulk, document-approval) shares.
     """
+    if institution.verification_status != VerificationStatus.VERIFIED:
+        raise InstitutionNotVerifiedError(institution.verification_status)
+
     document_hash = document_service.compute_sha256(document_bytes)
 
     # Idempotent — no-ops if this institution already has a stable signing identity.
@@ -149,14 +169,24 @@ def issue_signed_credential(
             )
         )
 
-        db.add(
-            ActivityLog(
-                actor_user_id=institution.user_id,
-                action="CREDENTIAL_ISSUED",
-                entity_type="credential",
-                entity_id=credential.id,
-                metadata_={"credential_identifier": credential_identifier, "student_id": str(student.id)},
-            )
+        log = ActivityLog(
+            actor_user_id=institution.user_id,
+            action="CREDENTIAL_ISSUED",
+            entity_type="credential",
+            entity_id=credential.id,
+            metadata_={"credential_identifier": credential_identifier, "student_id": str(student.id)},
+        )
+        db.add(log)
+        db.flush()
+
+        notification_service.create_notification(
+            db,
+            user_id=student.user_id,
+            title="Credential issued",
+            message=f"{institution.name} issued you a credential: {title}",
+            activity_log_id=log.id,
+            link_entity_type="credential",
+            link_entity_id=credential.id,
         )
 
         db.commit()
@@ -259,7 +289,12 @@ async def bulk_issue_credentials(
     PDF, not affiliated, validation error) never aborts or rolls back
     another student's already-issued credential. Never claims batch-wide
     success — the caller gets a per-item result list.
+
+    Phase A: the verification gate is checked once, upfront, for the whole batch, so an
+    unverified institution gets one clear error instead of N identical per-item failures.
     """
+    if institution.verification_status != VerificationStatus.VERIFIED:
+        raise InstitutionNotVerifiedError(institution.verification_status)
     _validate_fields(title, graduation_year, cgpa)
 
     results: list[BulkIssuanceItemResult] = []
@@ -293,6 +328,17 @@ async def bulk_issue_credentials(
                     student_id=student_id, student_name=None, status="failed", error="Student is not affiliated with your institution"
                 )
             )
+        except signing_service.InstitutionKeyMissingError:
+            # Not a per-item problem (unlike a bad PDF or an unaffiliated student) — every
+            # remaining item in this batch would fail identically, and the honest, non-leaky
+            # 503 message belongs at the route level, not stuffed into individual item errors.
+            raise
+        except document_service.StorageUnavailableError:
+            # Same reasoning as InstitutionKeyMissingError above: a storage outage isn't
+            # specific to this one student's document — every remaining item would fail
+            # identically, so this aborts the whole batch for one honest 503 at the route
+            # level instead of N misleading per-item "failed" results.
+            raise
         except Exception as exc:  # noqa: BLE001 — deliberately broad: one bad item must never abort the batch
             results.append(BulkIssuanceItemResult(student_id=student_id, student_name=None, status="failed", error=str(exc)))
 
@@ -320,14 +366,24 @@ def revoke_credential(db: Session, institution: Institution, credential_id: uuid
     credential.revoked_at = datetime.now(timezone.utc)
     db.add(credential)
 
-    db.add(
-        ActivityLog(
-            actor_user_id=institution.user_id,
-            action="CREDENTIAL_REVOKED",
-            entity_type="credential",
-            entity_id=credential.id,
-            metadata_={"credential_identifier": credential.credential_identifier},
-        )
+    log = ActivityLog(
+        actor_user_id=institution.user_id,
+        action="CREDENTIAL_REVOKED",
+        entity_type="credential",
+        entity_id=credential.id,
+        metadata_={"credential_identifier": credential.credential_identifier},
+    )
+    db.add(log)
+    db.flush()
+
+    notification_service.create_notification(
+        db,
+        user_id=credential.student.user_id,
+        title="Credential revoked",
+        message=f"{institution.name} revoked your credential: {credential.title}",
+        activity_log_id=log.id,
+        link_entity_type="credential",
+        link_entity_id=credential.id,
     )
 
     db.commit()

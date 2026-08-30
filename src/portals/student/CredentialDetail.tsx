@@ -4,7 +4,7 @@ import { ArrowLeft, Lock, Info, FileText, Share2, CheckCircle2 } from 'lucide-re
 import { getCredential, getCredentialDocument } from '../../lib/api'
 import { ApiError } from '../../lib/apiClient'
 import type { Credential } from '../../types'
-import { Badge, Button, GlassPanel, Glow } from '../../components/ui'
+import { Badge, Button, GlassPanel, Glow, EmptyState, ErrorState } from '../../components/ui'
 import { SkeletonCard } from '../../components/ui/Skeleton'
 import { credentialStatusTone, credentialStatusLabel, CREDENTIAL_TYPE_ICON } from '../../lib/utils'
 import { CredentialBlockchainBadge } from '../../components/blockchain/BlockchainProof'
@@ -25,15 +25,37 @@ export function CredentialDetail() {
   const { id } = useParams<{ id: string }>()
   const [credential, setCredential] = useState<Credential | null>(null)
   const [loading, setLoading] = useState(true)
+  const [notFound, setNotFound] = useState(false)
+  const [error, setError] = useState<{ title: string; message: string } | null>(null)
   const [documentLoading, setDocumentLoading] = useState(false)
   const [documentError, setDocumentError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (id)
-      getCredential(id)
-        .then((c) => setCredential(c ?? null))
-        .finally(() => setLoading(false))
-  }, [id])
+  function load() {
+    if (!id) return
+    // Resetting loading/notFound/error before each fetch (both on id change and on
+    // manual Retry) is the actual intended behavior here, not an accidental cascading render.
+    // oxlint-disable-next-line react/set-state-in-effect
+    setLoading(true)
+    setNotFound(false)
+    setError(null)
+    getCredential(id)
+      .then((c) => {
+        if (!c) setNotFound(true)
+        else setCredential(c)
+      })
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 403) {
+          setError({ title: 'Access denied', message: err.message })
+        } else if (err instanceof ApiError) {
+          setError({ title: 'Something went wrong', message: err.message })
+        } else {
+          setError({ title: 'Something went wrong', message: 'Could not load this credential. Please try again.' })
+        }
+      })
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(load, [id])
 
   async function handleViewDocument() {
     if (!id) return
@@ -59,6 +81,14 @@ export function CredentialDetail() {
         <div className="mt-6"><SkeletonCard lines={5} /></div>
       </div>
     )
+  }
+
+  if (notFound) {
+    return <EmptyState icon={FileText} title="Credential not found" description="This credential could not be found." />
+  }
+
+  if (error) {
+    return <ErrorState title={error.title} description={error.message} onRetry={load} />
   }
 
   if (!credential) return null

@@ -24,6 +24,8 @@ import type {
   BackendShareGrant,
   ShareCreatedResult,
   ShareTokenAccessResult,
+  SharedCredentialItem,
+  SharedCredentialStatusFilter,
   AiHealthResult,
   AiDocumentRequirementsResult,
   AiCompanyIntelligenceResult,
@@ -32,12 +34,16 @@ import type {
   InstitutionCertificateRequest,
   StudentDocument,
   NotificationCounts,
+  AppNotification,
   Job,
   CreateJobInput,
   UpdateCompanyProfileInput,
   StudentJobApplication,
   CompanyJobApplication,
   JobAIAnalysisResult,
+  Page,
+  PendingInstitution,
+  PendingCompany,
 } from '../types'
 import {
   credentials,
@@ -58,9 +64,63 @@ export async function register(payload: RegisterPayload): Promise<AuthTokenRespo
   return apiClient.post<AuthTokenResponse>('/auth/register', payload)
 }
 
-/** Public — real institutions a student can pick from (never a free-typed id). */
-export async function getInstitutions(): Promise<InstitutionSummary[]> {
-  return apiClient.get<InstitutionSummary[]>('/institutions')
+function toQueryString(params: Record<string, string | number | undefined>): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') search.set(key, String(value))
+  }
+  const qs = search.toString()
+  return qs ? `?${qs}` : ''
+}
+
+// The backend directory endpoints (GET /institutions, GET /companies) are always paginated
+// (see backend/app/schemas/pagination.py) — this is the page size the handful of "just give me
+// the full pick-list" callers (registration's institution picker, the direct-share company
+// picker) request so they keep behaving like a complete list without needing their own
+// pagination UI. The dedicated Directory pages (Institutions.tsx/Companies.tsx) use
+// getInstitutionsPage/getCompaniesPage below for real, page-by-page browsing of the whole
+// (potentially tens-of-thousands-of-rows) dataset instead.
+const LEGACY_FULL_LIST_PAGE_SIZE = 100
+
+/**
+ * Public — real institutions, unwrapped to a plain array. Used by the
+ * registration/link-institution picker and the direct-share company picker
+ * equivalents — anywhere that predates pagination and just wants "the
+ * list." See getInstitutionsPage for the real paginated directory query.
+ */
+export async function getInstitutions(filters?: { search?: string; location?: string; country?: string }): Promise<InstitutionSummary[]> {
+  const page = await apiClient.get<Page<InstitutionSummary>>(
+    `/institutions${toQueryString({ ...filters, page_size: LEGACY_FULL_LIST_PAGE_SIZE })}`
+  )
+  return page.items
+}
+
+/** Public — one page of the institution directory, with the real total/page_count for pagination controls. */
+export async function getInstitutionsPage(params?: {
+  search?: string
+  location?: string
+  country?: string
+  region?: string
+  institutionType?: string
+  page?: number
+  pageSize?: number
+}): Promise<Page<InstitutionSummary>> {
+  return apiClient.get<Page<InstitutionSummary>>(
+    `/institutions${toQueryString({
+      search: params?.search,
+      location: params?.location,
+      country: params?.country,
+      region: params?.region,
+      institution_type: params?.institutionType,
+      page: params?.page,
+      page_size: params?.pageSize,
+    })}`
+  )
+}
+
+/** Public — one institution's directory profile. */
+export async function getInstitution(id: string): Promise<InstitutionSummary> {
+  return apiClient.get<InstitutionSummary>(`/institutions/${id}`)
 }
 
 /** Links (or re-links) the authenticated student to a real institution, validated server-side. */
@@ -197,6 +257,23 @@ export async function getCompanyShares(): Promise<BackendShareGrant[]> {
   return apiClient.get<BackendShareGrant[]>('/companies/me/shares')
 }
 
+/** Paginated, searchable, filterable "Credentials Shared With You" inbox — never loads more than one page. */
+export async function getSharedCredentialsPage(params?: {
+  search?: string
+  status?: SharedCredentialStatusFilter
+  page?: number
+  pageSize?: number
+}): Promise<Page<SharedCredentialItem>> {
+  return apiClient.get<Page<SharedCredentialItem>>(
+    `/companies/me/shared-credentials${toQueryString({
+      search: params?.search,
+      status: params?.status,
+      page: params?.page,
+      page_size: params?.pageSize,
+    })}`
+  )
+}
+
 export async function revokeShare(shareId: string): Promise<BackendShareGrant> {
   return apiClient.post<BackendShareGrant>(`/shares/${shareId}/revoke`)
 }
@@ -234,29 +311,123 @@ export async function createDirectShare(
 // changes from the mock accessLog/institutionActivity arrays to real
 // GET /api/{role}/me/activity calls.
 
+// Real entity_type values written by the backend (see activity_service.py's
+// get_*_activity conditions and every ActivityLog(...) call site) — never
+// shown raw in the UI, always passed through this map first.
 const ACTIVITY_ENTITY_LABEL: Record<string, string> = {
   credential: 'Credential',
   credential_request: 'Credential Request',
-  share_grant: 'Share',
+  share_grant: 'Credential Share',
+  job_application: 'Job Application',
+  institution_certificate_request: 'Certificate Request',
+  student_document: 'Student Document',
+  institution: 'Institution',
+  company: 'Company',
   ai_analysis: 'AI Analysis',
+}
+
+// Real action values written by the backend (see activity_service.py's
+// _GENERIC_MESSAGES and render_message, and every ActivityLog(action=...)
+// call site across credential_service, sharing_service, verification_service,
+// institution_request_service, student_document_service, job_application_service,
+// admin_service, and routes/ai.py). Every action below is a short, human-
+// readable event-type label — the small badge/chip shown on each Activity row —
+// distinct from `message` (the full rendered sentence) and from the entity
+// label above (what the event is ABOUT, vs. what KIND of event it is).
+const ACTIVITY_ACTION_LABEL: Record<string, string> = {
+  CREDENTIAL_ISSUED: 'Credential Issued',
+  CREDENTIAL_REVOKED: 'Credential Revoked',
+  CREDENTIAL_VERIFIED: 'Credential Verified',
+  CREDENTIAL_SHARED: 'Credential Shared',
+  SHARE_REVOKED: 'Credential Share Revoked',
+  SHARE_ACCESSED: 'Credential Share Accessed',
+  CREDENTIAL_REQUEST_CREATED: 'Credential Request Created',
+  CREDENTIAL_REQUEST_APPROVED: 'Credential Request Approved',
+  CREDENTIAL_REQUEST_DECLINED: 'Credential Request Declined',
+  CERTIFICATE_REQUEST_CREATED: 'Certificate Request Created',
+  CERTIFICATE_REQUEST_APPROVED: 'Certificate Request Approved',
+  CERTIFICATE_REQUEST_REJECTED: 'Certificate Request Rejected',
+  STUDENT_DOCUMENT_SUBMITTED: 'Document Submitted',
+  STUDENT_DOCUMENT_APPROVED: 'Document Approved',
+  STUDENT_DOCUMENT_REJECTED: 'Document Rejected',
+  APPLICATION_SUBMITTED: 'Application Submitted',
+  APPLICATION_UNDER_REVIEW: 'Application Under Review',
+  APPLICATION_SHORTLISTED: 'Application Shortlisted',
+  APPLICATION_ACCEPTED: 'Application Accepted',
+  APPLICATION_REJECTED: 'Application Rejected',
+  APPLICATION_WITHDRAWN: 'Application Withdrawn',
+  ADMIN_APPROVED_INSTITUTION: 'Institution Approved',
+  ADMIN_REJECTED_INSTITUTION: 'Institution Rejected',
+  ADMIN_APPROVED_COMPANY: 'Company Approved',
+  ADMIN_REJECTED_COMPANY: 'Company Rejected',
+  AI_DOCUMENT_ANALYSIS: 'AI Document Analysis',
+  AI_COMPANY_ANALYSIS: 'AI Company Analysis',
+  AI_JOB_ANALYSIS: 'AI Job Analysis',
+  AI_JOB_MATCH: 'AI Job Match',
 }
 
 const ACTIVITY_CATEGORY: Record<string, AccessLogEntry['category']> = {
   CREDENTIAL_ISSUED: 'credential',
   CREDENTIAL_REVOKED: 'credential',
   CREDENTIAL_VERIFIED: 'verification',
-  CREDENTIAL_REQUEST_CREATED: 'requests',
-  CREDENTIAL_REQUEST_APPROVED: 'requests',
-  CREDENTIAL_REQUEST_DECLINED: 'requests',
   CREDENTIAL_SHARED: 'sharing',
   SHARE_REVOKED: 'sharing',
   SHARE_ACCESSED: 'sharing',
+  CREDENTIAL_REQUEST_CREATED: 'requests',
+  CREDENTIAL_REQUEST_APPROVED: 'requests',
+  CREDENTIAL_REQUEST_DECLINED: 'requests',
+  CERTIFICATE_REQUEST_CREATED: 'requests',
+  CERTIFICATE_REQUEST_APPROVED: 'requests',
+  CERTIFICATE_REQUEST_REJECTED: 'requests',
+  STUDENT_DOCUMENT_SUBMITTED: 'document',
+  STUDENT_DOCUMENT_APPROVED: 'document',
+  STUDENT_DOCUMENT_REJECTED: 'document',
+  APPLICATION_SUBMITTED: 'application',
+  APPLICATION_UNDER_REVIEW: 'application',
+  APPLICATION_SHORTLISTED: 'application',
+  APPLICATION_ACCEPTED: 'application',
+  APPLICATION_REJECTED: 'application',
+  APPLICATION_WITHDRAWN: 'application',
+  ADMIN_APPROVED_INSTITUTION: 'admin',
+  ADMIN_REJECTED_INSTITUTION: 'admin',
+  ADMIN_APPROVED_COMPANY: 'admin',
+  ADMIN_REJECTED_COMPANY: 'admin',
+  AI_DOCUMENT_ANALYSIS: 'ai',
+  AI_COMPANY_ANALYSIS: 'ai',
+  AI_JOB_ANALYSIS: 'ai',
+  AI_JOB_MATCH: 'ai',
 }
 
 const ACTIVITY_ICON: Record<string, AccessLogEntry['icon']> = {
-  CREDENTIAL_VERIFIED: 'check',
-  SHARE_ACCESSED: 'check',
-  CREDENTIAL_REQUEST_CREATED: 'mail',
+  CREDENTIAL_ISSUED: 'issued',
+  CREDENTIAL_REVOKED: 'revoked',
+  CREDENTIAL_VERIFIED: 'verified',
+  CREDENTIAL_SHARED: 'shared',
+  SHARE_REVOKED: 'revoked',
+  SHARE_ACCESSED: 'shared',
+  CREDENTIAL_REQUEST_CREATED: 'request',
+  CREDENTIAL_REQUEST_APPROVED: 'approved',
+  CREDENTIAL_REQUEST_DECLINED: 'declined',
+  CERTIFICATE_REQUEST_CREATED: 'request',
+  CERTIFICATE_REQUEST_APPROVED: 'approved',
+  CERTIFICATE_REQUEST_REJECTED: 'declined',
+  STUDENT_DOCUMENT_SUBMITTED: 'document_submitted',
+  STUDENT_DOCUMENT_APPROVED: 'approved',
+  STUDENT_DOCUMENT_REJECTED: 'declined',
+  APPLICATION_SUBMITTED: 'application_submitted',
+  APPLICATION_UNDER_REVIEW: 'under_review',
+  APPLICATION_SHORTLISTED: 'shortlisted',
+  APPLICATION_ACCEPTED: 'approved',
+  APPLICATION_REJECTED: 'declined',
+  APPLICATION_WITHDRAWN: 'withdrawn',
+  ADMIN_APPROVED_INSTITUTION: 'approved',
+  ADMIN_REJECTED_INSTITUTION: 'declined',
+  ADMIN_APPROVED_COMPANY: 'approved',
+  ADMIN_REJECTED_COMPANY: 'declined',
+  AI_DOCUMENT_ANALYSIS: 'ai',
+  AI_COMPANY_ANALYSIS: 'ai',
+  AI_JOB_ANALYSIS: 'ai',
+  AI_JOB_MATCH: 'ai',
 }
 
 function formatActivityTimestamp(iso: string): string {
@@ -273,13 +444,21 @@ function formatActivityTimestamp(iso: string): string {
 }
 
 function mapBackendActivity(row: BackendActivityEvent): AccessLogEntry {
+  // Every action currently emitted anywhere in the backend has an explicit
+  // entry in all three maps above — these `??` fallbacks are a defensive
+  // catch-all for a hypothetical future action code, not a real code path
+  // today. `label`/`icon` fall back to an honestly-generic "Activity"/pulse-
+  // icon rather than a specific-looking (and potentially wrong) label like
+  // "Issued" or "Approved"; `category` keeps the pre-existing 'sharing'
+  // fallback purely for type-safety on this now-unreachable branch.
   return {
     id: row.id,
-    category: ACTIVITY_CATEGORY[row.action] ?? (row.action.startsWith('AI_') ? 'ai' : 'sharing'),
+    category: ACTIVITY_CATEGORY[row.action] ?? 'sharing',
+    label: ACTIVITY_ACTION_LABEL[row.action] ?? 'Activity',
     actor: row.entity_type ? (ACTIVITY_ENTITY_LABEL[row.entity_type] ?? row.entity_type) : 'Activity',
     action: row.message,
     timestamp: formatActivityTimestamp(row.created_at),
-    icon: ACTIVITY_ICON[row.action] ?? 'shield',
+    icon: ACTIVITY_ICON[row.action] ?? 'activity',
   }
 }
 
@@ -587,6 +766,28 @@ export async function getNotificationCounts(): Promise<NotificationCounts> {
   return apiClient.get<NotificationCounts>('/notifications/me/counts')
 }
 
+// ---- Notification center (real backend) — answers "what new events do I have?",
+// distinct from the pending-action counts above ("what currently needs my action?"). ------
+
+/** Paginated, newest-first notification history — never loads the full history in one response. */
+export async function getNotificationsPage(params?: { page?: number; pageSize?: number }): Promise<Page<AppNotification>> {
+  return apiClient.get<Page<AppNotification>>(
+    `/notifications/me${toQueryString({ page: params?.page, page_size: params?.pageSize })}`
+  )
+}
+
+export async function getUnreadNotificationCount(): Promise<number> {
+  return apiClient.get<number>('/notifications/me/unread-count')
+}
+
+export async function markNotificationRead(notificationId: string): Promise<AppNotification> {
+  return apiClient.post<AppNotification>(`/notifications/me/${notificationId}/read`)
+}
+
+export async function markAllNotificationsRead(): Promise<{ updated: number }> {
+  return apiClient.post<{ updated: number }>('/notifications/me/read-all')
+}
+
 // ---- Verifier document view/download (real backend, PS3 Phase G) ---------------------
 
 /** Any active share grant (any permission level) allows this — backend-enforced. */
@@ -601,8 +802,31 @@ export async function downloadSharedCredentialDocument(credentialId: string): Pr
 
 // ---- Company profiles (real backend, job marketplace phase) ---------------------------
 
-export async function getRealCompanies(): Promise<Company[]> {
-  return apiClient.get<Company[]>('/companies')
+/** Unwrapped to a plain array — used by the direct-share company picker (ShareFlow.tsx) and anywhere else that predates pagination. See getCompaniesPage for the real paginated directory query. */
+export async function getRealCompanies(filters?: { search?: string; industry?: string; location?: string }): Promise<Company[]> {
+  const page = await apiClient.get<Page<Company>>(`/companies${toQueryString({ ...filters, page_size: LEGACY_FULL_LIST_PAGE_SIZE })}`)
+  return page.items
+}
+
+/** One page of the company directory, with the real total/page_count for pagination controls. */
+export async function getCompaniesPage(params?: {
+  search?: string
+  industry?: string
+  location?: string
+  country?: string
+  page?: number
+  pageSize?: number
+}): Promise<Page<Company>> {
+  return apiClient.get<Page<Company>>(
+    `/companies${toQueryString({
+      search: params?.search,
+      industry: params?.industry,
+      location: params?.location,
+      country: params?.country,
+      page: params?.page,
+      page_size: params?.pageSize,
+    })}`
+  )
 }
 
 export async function getRealCompany(id: string): Promise<Company> {
@@ -639,8 +863,44 @@ export async function getMyJobs(): Promise<Job[]> {
   return apiClient.get<Job[]>('/companies/me/jobs')
 }
 
-export async function getOpenJobs(): Promise<Job[]> {
-  return apiClient.get<Job[]>('/jobs')
+/**
+ * Public — real open jobs, unwrapped to a plain array. Used by CompanyDetail's "jobs at this
+ * company" list and the student Dashboard's job preview — both predate pagination and just want
+ * "the list" (see getOpenJobsPage for the real paginated Jobs directory query the student Jobs
+ * page uses). GET /api/jobs is paginated server-side (Phase A) exactly like institutions/
+ * companies already are; this wrapper absorbs that the same way getInstitutions() does.
+ */
+export async function getOpenJobs(filters?: { search?: string; companyId?: string; location?: string; degree?: string }): Promise<Job[]> {
+  const page = await apiClient.get<Page<Job>>(
+    `/jobs${toQueryString({
+      search: filters?.search,
+      company_id: filters?.companyId,
+      location: filters?.location,
+      degree: filters?.degree,
+      page_size: LEGACY_FULL_LIST_PAGE_SIZE,
+    })}`
+  )
+  return page.items
+}
+
+export async function getOpenJobsPage(params?: {
+  search?: string
+  companyId?: string
+  location?: string
+  degree?: string
+  page?: number
+  pageSize?: number
+}): Promise<Page<Job>> {
+  return apiClient.get<Page<Job>>(
+    `/jobs${toQueryString({
+      search: params?.search,
+      company_id: params?.companyId,
+      location: params?.location,
+      degree: params?.degree,
+      page: params?.page,
+      page_size: params?.pageSize,
+    })}`
+  )
 }
 
 export async function getJob(jobId: string): Promise<Job> {
@@ -674,4 +934,37 @@ export async function updateApplicationStatus(applicationId: string, newStatus: 
 /** Student withdraws their own application — only allowed from a non-final state (not ACCEPTED/REJECTED/already-WITHDRAWN). */
 export async function withdrawApplication(applicationId: string): Promise<StudentJobApplication> {
   return apiClient.post<StudentJobApplication>(`/students/me/applications/${applicationId}/withdraw`)
+}
+
+// ---- Admin: institution/company verification (Phase A) ----------------------------------
+// Every one of these requires role=admin server-side (require_admin) — nothing here is a
+// security boundary, it's just the typed client for endpoints only an admin token can succeed
+// against. See backend/app/routes/admin.py.
+
+export async function getPendingInstitutions(params?: { search?: string; page?: number; pageSize?: number }): Promise<Page<PendingInstitution>> {
+  return apiClient.get<Page<PendingInstitution>>(
+    `/admin/institutions/pending${toQueryString({ search: params?.search, page: params?.page, page_size: params?.pageSize })}`
+  )
+}
+
+export async function approveInstitutionVerification(institutionId: string): Promise<PendingInstitution> {
+  return apiClient.post<PendingInstitution>(`/admin/institutions/${institutionId}/approve`)
+}
+
+export async function rejectInstitutionVerification(institutionId: string, reason: string): Promise<PendingInstitution> {
+  return apiClient.post<PendingInstitution>(`/admin/institutions/${institutionId}/reject`, { reason })
+}
+
+export async function getPendingCompanies(params?: { search?: string; page?: number; pageSize?: number }): Promise<Page<PendingCompany>> {
+  return apiClient.get<Page<PendingCompany>>(
+    `/admin/companies/pending${toQueryString({ search: params?.search, page: params?.page, page_size: params?.pageSize })}`
+  )
+}
+
+export async function approveCompanyVerification(companyId: string): Promise<PendingCompany> {
+  return apiClient.post<PendingCompany>(`/admin/companies/${companyId}/approve`)
+}
+
+export async function rejectCompanyVerification(companyId: string, reason: string): Promise<PendingCompany> {
+  return apiClient.post<PendingCompany>(`/admin/companies/${companyId}/reject`, { reason })
 }

@@ -1,8 +1,6 @@
 import uuid
-from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -12,7 +10,7 @@ from ..models.user import User
 from ..schemas.blockchain import AnchorResponse
 from ..schemas.credential import CredentialResponse
 from ..security.permissions import get_current_user, require_institution
-from ..services import credential_service
+from ..services import credential_service, document_service
 from ..services.blockchain import anchoring_service
 from ..services.credential_service import to_credential_response
 
@@ -76,7 +74,7 @@ def get_credential_document(
     credential_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> FileResponse:
+) -> Response:
     credential = _get_credential_or_404(db, credential_id)
     _authorize_access(credential, current_user)
 
@@ -85,17 +83,24 @@ def get_credential_document(
 
     # storage_path is an internal DB value, never sent to the client — this
     # response streams file bytes back, it doesn't echo the path.
-    path = Path(credential.document.storage_path)
-    if not path.exists():
+    try:
+        exists = document_service.document_exists(credential.document.storage_path)
+    except document_service.StorageUnavailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document storage is temporarily unavailable. Please try again shortly.",
+        )
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file is missing on this server")
 
+    data = document_service.read_document(credential.document.storage_path)
     # Download filename is derived from the server-generated credential
     # identifier, not the client-supplied original_filename — avoids any
     # unsanitized user input reaching a response header.
-    return FileResponse(
-        path,
+    return Response(
+        content=data,
         media_type=credential.document.mime_type,
-        filename=f"{credential.credential_identifier}.pdf",
+        headers={"Content-Disposition": f'attachment; filename="{credential.credential_identifier}.pdf"'},
     )
 
 

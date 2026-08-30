@@ -33,8 +33,14 @@ def _register(client, *, role, email, **extra):
     return resp.json()
 
 
-def _register_institution(client, email="revoke-inst@test.credchain.dev", name="Test University"):
-    body = _register(client, role="institution", email=email, institution_name=name)
+def _register_institution(client, db_session, email="revoke-inst@test.credchain.dev", name="Test University"):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
+    body = _register(client, role="institution", email=email, institution_id=str(institution.id))
     return {"token": body["access_token"], "institution_id": body["user"]["institution_id"]}
 
 
@@ -49,8 +55,14 @@ def _register_student(client, db_session, institution_id, email="revoke-student@
     return {"token": body["access_token"], "student_id": student_id}
 
 
-def _register_verifier(client, email="revoke-verifier@test.credchain.dev", name="Test Company"):
-    body = _register(client, role="verifier", email=email, company_name=name)
+def _register_verifier(client, db_session, email="revoke-verifier@test.credchain.dev", name="Test Company"):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
+    body = _register(client, role="verifier", email=email, company_id=str(company.id))
     return {"token": body["access_token"], "company_id": body["user"]["company_id"]}
 
 
@@ -73,7 +85,7 @@ def _issue(client, institution_token, student_id, **overrides) -> dict:
 
 
 def _setup(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
     credential = _issue(client, inst["token"], student["student_id"])
     return {"inst": inst, "student": student, "credential": credential}
@@ -100,7 +112,7 @@ def test_institution_revokes_own_credential(client, db_session):
 
 def test_institution_cannot_revoke_another_institutions_credential(client, db_session):
     ctx = _setup(client, db_session)
-    other_inst = _register_institution(client, email="other-inst@test.credchain.dev", name="Other University")
+    other_inst = _register_institution(client, db_session, email="other-inst@test.credchain.dev", name="Other University")
 
     resp = _revoke(client, other_inst["token"], ctx["credential"]["id"])
     assert resp.status_code == 403
@@ -120,7 +132,7 @@ def test_student_cannot_revoke_credential(client, db_session):
 
 def test_company_cannot_revoke_credential(client, db_session):
     ctx = _setup(client, db_session)
-    verifier = _register_verifier(client)
+    verifier = _register_verifier(client, db_session)
     resp = _revoke(client, verifier["token"], ctx["credential"]["id"])
     assert resp.status_code == 403
 
@@ -157,7 +169,7 @@ def test_status_and_revoked_at_persisted(client, db_session):
 
 def test_revoked_credential_cannot_verify_as_verified(client, db_session):
     ctx = _setup(client, db_session)
-    verifier = _register_verifier(client, email="revoke-verify-check@test.credchain.dev")
+    verifier = _register_verifier(client, db_session, email="revoke-verify-check@test.credchain.dev")
 
     grant = ShareGrant(
         student_id=uuid.UUID(ctx["student"]["student_id"]),

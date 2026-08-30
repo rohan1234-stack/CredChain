@@ -13,6 +13,7 @@ from sqlalchemy import text
 from .config import settings
 from .database import engine
 from .routes import activity as activity_routes
+from .routes import admin as admin_routes
 from .routes import ai as ai_routes
 from .routes import auth as auth_routes
 from .routes import credentials as credential_routes
@@ -52,6 +53,7 @@ app.include_router(activity_routes.router)
 app.include_router(notification_routes.router)
 app.include_router(company_routes.router)
 app.include_router(job_routes.router)
+app.include_router(admin_routes.router)
 
 
 @app.get("/api/health", tags=["health"])

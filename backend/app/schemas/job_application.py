@@ -23,6 +23,19 @@ class UpdateApplicationStatusBody(BaseModel):
     reason: str | None = Field(default=None, max_length=1000)
 
 
+class ApplicationHistoryEntry(BaseModel):
+    """
+    One real, already-recorded status transition — built entirely from an
+    ActivityLog row this application's own service functions already write
+    (see job_application_service.get_application_history). Never a fabricated
+    step: a status this application never actually passed through (e.g.
+    UNDER_REVIEW on a fast APPLIED -> REJECTED) simply has no entry here.
+    """
+
+    status: ApplicationStatus
+    occurred_at: datetime
+
+
 class StudentApplicationResponse(BaseModel):
     id: uuid.UUID
     job_id: uuid.UUID
@@ -32,6 +45,7 @@ class StudentApplicationResponse(BaseModel):
     status: ApplicationStatus
     rejection_reason: str | None
     created_at: datetime
+    history: list[ApplicationHistoryEntry]
 
 
 class CompanyApplicationResponse(BaseModel):
@@ -44,6 +58,7 @@ class CompanyApplicationResponse(BaseModel):
     status: ApplicationStatus
     rejection_reason: str | None
     created_at: datetime
+    history: list[ApplicationHistoryEntry]
     # Reuses the EXISTING CredentialRequestResponse shape (requested_credentials
     # + shared_credentials) — the same "Requested X / Received Y" data a
     # direct company credential request already surfaces. None only if the

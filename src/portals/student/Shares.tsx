@@ -35,6 +35,7 @@ export function Shares() {
   useEffect(() => {
     getStudentShares()
       .then(setShares)
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Unable to load credential shares. Please try again.'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -64,7 +65,7 @@ export function Shares() {
       {error && <div className="mb-5 rounded-lg bg-bad-bg px-3.5 py-2.5 text-[13px] text-bad">{error}</div>}
 
       {shares.length === 0 ? (
-        <EmptyState icon={Share2} title="No shares yet" description="Once you approve a credential request, it will appear here." />
+        !error && <EmptyState icon={Share2} title="No shares yet" description="Once you approve a credential request, it will appear here." />
       ) : (
         <div className="space-y-4">
           {/* Bento hero row: featured active share + stats rail */}

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum as SAEnum, ForeignKey, Index, Text
+from sqlalchemy import Enum as SAEnum, ForeignKey, Index, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +35,10 @@ class JobApplication(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         Index("ix_job_applications_student_status", "student_id", "status"),
         Index("ix_job_applications_company_status", "company_id", "status"),
+        # Application-layer duplicate check (apply_to_job) already rejects a second
+        # application before this is ever reached in normal sequential use — this is
+        # the final concurrency safety boundary for two requests racing each other.
+        UniqueConstraint("job_id", "student_id", name="uq_job_applications_job_id_student_id"),
     )
 
     student_id: Mapped[uuid.UUID] = mapped_column(

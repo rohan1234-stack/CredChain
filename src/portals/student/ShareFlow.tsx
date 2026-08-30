@@ -1,10 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Building2, Eye, Download, Lock, Send } from 'lucide-react'
-import { getCredentials, getStudentRequests, approveCredentialRequest, createDirectShare, getRealCompanies } from '../../lib/api'
+import { ArrowLeft, Building2, Eye, Download, Lock, Search, Send } from 'lucide-react'
+import { getCredentials, getStudentRequests, approveCredentialRequest, createDirectShare, getCompaniesPage } from '../../lib/api'
 import { ApiError } from '../../lib/apiClient'
+import { Badge } from '../../components/ui'
 import type { Credential, BackendCredentialRequest, Company } from '../../types'
 import { cx, CREDENTIAL_TYPE_ICON } from '../../lib/utils'
+
+// Small, server-searched result set — never the whole 10,000+ row company
+// directory. See RECIPIENT_HELP_TEXT below for why directory-only rows are
+// shown-but-disabled rather than omitted.
+const RECIPIENT_RESULT_PAGE_SIZE = 8
+const RECIPIENT_HELP_TEXT =
+  "Only companies registered on CredChain can receive a direct share — a directory-only listing has no CredChain login to ever view it. Directory-only companies are shown for reference (e.g. to tell them apart from a similarly named registered one) but can't be selected."
 
 const EXPIRY_OPTIONS = [
   { value: 1, label: '1 day' },
@@ -35,32 +43,67 @@ export function ShareFlow() {
 
   const [credentials, setCredentials] = useState<Credential[]>([])
   const [request, setRequest] = useState<BackendCredentialRequest | null>(null)
-  const [companies, setCompanies] = useState<Company[]>([])
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [recipient, setRecipient] = useState('')
-  const [companyId, setCompanyId] = useState('')
+
+  // Direct-share recipient picker: NO default recipient. selectedCompany stays
+  // null until the student explicitly clicks a search result — never
+  // auto-populated (this replaces the old cs[0].id auto-select bug, see
+  // git history / the CredChain "012" incident).
+  const [companyQuery, setCompanyQuery] = useState('')
+  const [companyResults, setCompanyResults] = useState<Company[]>([])
+  const [companyResultsLoading, setCompanyResultsLoading] = useState(false)
+  const [companyResultsError, setCompanyResultsError] = useState<string | null>(null)
+  const [selectedCompany, setSelectedCompany] = useState<Company | null>(null)
+
   const [expiry, setExpiry] = useState<number>(7)
   const [permission, setPermission] = useState<'view_only' | 'view_download'>('view_only')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    getCredentials().then(setCredentials)
+    getCredentials()
+      .then(setCredentials)
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Unable to load your credentials. Please try again.'))
     if (requestId) {
-      getStudentRequests().then((reqs) => {
-        const r = reqs.find((x) => x.id === requestId) ?? null
-        setRequest(r)
-        if (r) setRecipient(r.company_name)
-      })
-    } else {
-      if (idsParam) setChecked(new Set(idsParam.split(',')))
-      // Direct share: recipient must be a real, existing company — never free text.
-      getRealCompanies().then((cs) => {
-        setCompanies(cs)
-        if (cs.length > 0) setCompanyId(cs[0].id)
-      })
+      getStudentRequests()
+        .then((reqs) => {
+          const r = reqs.find((x) => x.id === requestId) ?? null
+          setRequest(r)
+          if (r) setRecipient(r.company_name)
+        })
+        .catch((err) => setError(err instanceof ApiError ? err.message : 'Unable to load this request. Please try again.'))
+    } else if (idsParam) {
+      setChecked(new Set(idsParam.split(',')))
     }
   }, [requestId, idsParam])
+
+  // Debounced, backend-searched company lookup — never the whole directory.
+  // Skipped once a company is already selected: changing the (now-hidden)
+  // query text must never silently reassign the recipient (see "Change").
+  useEffect(() => {
+    if (requestId || selectedCompany) return
+    const handle = setTimeout(() => {
+      setCompanyResultsLoading(true)
+      setCompanyResultsError(null)
+      getCompaniesPage({ search: companyQuery.trim() || undefined, pageSize: RECIPIENT_RESULT_PAGE_SIZE })
+        .then((page) => setCompanyResults(page.items))
+        .catch((err) => setCompanyResultsError(err instanceof ApiError ? err.message : 'Unable to search companies. Please try again.'))
+        .finally(() => setCompanyResultsLoading(false))
+    }, 300)
+    return () => clearTimeout(handle)
+  }, [requestId, companyQuery, selectedCompany])
+
+  function selectCompany(c: Company) {
+    if (!c.is_registered) return
+    setSelectedCompany(c)
+    setError(null)
+  }
+
+  function changeCompany() {
+    setSelectedCompany(null)
+    setCompanyQuery('')
+  }
 
   // Once both the request and the student's real credentials are loaded,
   // pre-check whichever of the student's credentials match a requested
@@ -75,12 +118,7 @@ export function ShareFlow() {
     }
   }, [request, credentials])
 
-  useEffect(() => {
-    if (!requestId) {
-      const c = companies.find((x) => x.id === companyId)
-      setRecipient(c?.name ?? '')
-    }
-  }, [requestId, companyId, companies])
+  const recipientName = requestId ? recipient : (selectedCompany?.name ?? '')
 
   const previewCredential = useMemo(() => credentials.find((c) => checked.has(c.id)) ?? null, [credentials, checked])
   const isAnchored = previewCredential?.blockchain?.status === 'anchored'
@@ -98,6 +136,7 @@ export function ShareFlow() {
   }
 
   async function handleSubmit() {
+    if (!requestId && !selectedCompany) return
     setSubmitting(true)
     setError(null)
     try {
@@ -114,7 +153,7 @@ export function ShareFlow() {
           },
         })
       } else {
-        const result = await createDirectShare(companyId, Array.from(checked), expiry, permission)
+        const result = await createDirectShare(selectedCompany!.id, Array.from(checked), expiry, permission)
         navigate('/student/share/confirmation', {
           state: {
             recipient: result.share.company_name,
@@ -229,22 +268,74 @@ export function ShareFlow() {
                     {request && <p className="truncate text-xs text-muted">{request.purpose}</p>}
                   </div>
                 </div>
-              ) : companies.length === 0 ? (
-                <p className="text-sm text-muted">No companies are registered on CredChain yet.</p>
-              ) : (
-                <div className="flex items-center gap-3 rounded-lg border border-line bg-canvas px-4 py-3 focus-within:border-electric">
-                  <Building2 className="h-5 w-5 shrink-0 text-faint" strokeWidth={2} />
-                  <select
-                    value={companyId}
-                    onChange={(e) => setCompanyId(e.target.value)}
-                    className="w-full bg-transparent font-semibold text-ink outline-none"
+              ) : selectedCompany ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-line bg-canvas px-4 py-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Building2 className="h-5 w-5 shrink-0 text-faint" strokeWidth={2} />
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-ink">{selectedCompany.name}</p>
+                      <p className="truncate text-xs text-muted">
+                        {[selectedCompany.city, selectedCompany.country].filter(Boolean).join(', ') ||
+                          selectedCompany.location ||
+                          'Location unknown'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={changeCompany}
+                    className="shrink-0 font-[family-name:var(--font-mono)] text-[11px] font-semibold uppercase tracking-[0.1em] text-primary hover:underline"
                   >
-                    {companies.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                    Change
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 rounded-lg border border-line bg-canvas px-3 py-2 focus-within:border-electric">
+                    <Search className="h-4 w-4 shrink-0 text-faint" strokeWidth={2} />
+                    <input
+                      value={companyQuery}
+                      onChange={(e) => setCompanyQuery(e.target.value)}
+                      placeholder="Search companies…"
+                      className="w-full bg-transparent text-sm text-ink outline-none placeholder:text-faint"
+                    />
+                  </div>
+
+                  {companyResultsLoading && <p className="text-xs text-muted">Searching…</p>}
+                  {!companyResultsLoading && companyResultsError && <p className="text-xs text-bad">{companyResultsError}</p>}
+                  {!companyResultsLoading && !companyResultsError && companyResults.length === 0 && (
+                    <p className="text-xs text-muted">
+                      No companies matched{companyQuery.trim() ? ` "${companyQuery.trim()}"` : ''}.
+                    </p>
+                  )}
+                  {!companyResultsLoading && !companyResultsError && companyResults.length > 0 && (
+                    <div className="max-h-64 space-y-1 overflow-y-auto rounded-lg border border-line bg-canvas p-1.5">
+                      {companyResults.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          disabled={!c.is_registered}
+                          onClick={() => selectCompany(c)}
+                          title={c.is_registered ? undefined : 'Directory-only listing — has no CredChain account to receive a share'}
+                          className={cx(
+                            'flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition-colors',
+                            c.is_registered ? 'hover:bg-surface-2' : 'cursor-not-allowed opacity-50'
+                          )}
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-ink">{c.name}</p>
+                            <p className="truncate text-xs text-muted">
+                              {[c.city, c.country].filter(Boolean).join(', ') || c.location || 'Location unknown'}
+                            </p>
+                          </div>
+                          <Badge tone={c.is_registered ? 'good' : 'neutral'} size="sm" withIcon={false}>
+                            {c.is_registered ? 'Registered' : 'Directory only'}
+                          </Badge>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-[11px] text-faint">{RECIPIENT_HELP_TEXT}</p>
                 </div>
               )}
             </div>
@@ -339,17 +430,25 @@ export function ShareFlow() {
               </div>
             </div>
 
-            <div className="rounded-lg bg-primary-bg px-4 py-3 text-[13px] text-primary">
-              You are sharing {checked.size} credential{checked.size === 1 ? '' : 's'}.{' '}
-              {recipient || 'This recipient'} will not receive your other credentials.
-            </div>
+            {recipientName ? (
+              <div className="rounded-lg bg-primary-bg px-4 py-3 text-[13px] text-primary">
+                <p className="font-semibold">
+                  You are about to share {checked.size} credential{checked.size === 1 ? '' : 's'} with {recipientName}.
+                </p>
+                <p className="mt-1 text-primary/80">{recipientName} will not receive your other credentials.</p>
+              </div>
+            ) : (
+              <div className="rounded-lg bg-surface-2/60 px-4 py-3 text-[13px] text-muted">
+                Select a recipient above before generating a share link.
+              </div>
+            )}
 
             {error && <div className="rounded-lg bg-bad-bg px-3.5 py-2.5 text-[13px] text-bad">{error}</div>}
 
             <div className="pt-1">
               <button
                 type="button"
-                disabled={checked.size === 0 || (requestId ? !recipient : !companyId) || submitting}
+                disabled={checked.size === 0 || !recipientName || submitting}
                 onClick={handleSubmit}
                 className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-primary to-primary-dark py-3.5 text-[15px] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.2)] transition-opacity hover:opacity-90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
               >

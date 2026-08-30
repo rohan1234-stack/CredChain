@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Shield, Mail, Check, Activity as ActivityIcon } from 'lucide-react'
+import { Activity as ActivityIcon } from 'lucide-react'
 import { getActivity } from '../../lib/api'
 import { ApiError } from '../../lib/apiClient'
 import type { AccessLogEntry } from '../../types'
 import { PageHeader, FilterPills, EmptyState, ErrorState, GlassPanel } from '../../components/ui'
 import { SkeletonCard } from '../../components/ui/Skeleton'
-import { cx, TONE_CLASSES, type Tone } from '../../lib/utils'
+import { cx, TONE_CLASSES, TONE_GRADIENT_FROM, ACTIVITY_ICON_MAP, ACTIVITY_FILTER_OPTIONS } from '../../lib/utils'
 
 /**
  * Reproduces Stitch's "activity_log" screen: a connected vertical timeline
@@ -18,24 +18,15 @@ import { cx, TONE_CLASSES, type Tone } from '../../lib/utils'
  * returned by getActivity().
  */
 
-const LOG_ICON = { shield: Shield, mail: Mail, check: Check }
-const LOG_TONE: Record<AccessLogEntry['icon'], Tone> = { shield: 'primary', mail: 'neutral', check: 'good' }
-const LOG_CHIP_LABEL: Record<AccessLogEntry['icon'], string> = { shield: 'VERIFIED', mail: 'REQUEST', check: 'SHARED' }
-const LOG_STREAK: Record<AccessLogEntry['icon'], string> = {
-  shield: 'from-primary/60 to-transparent',
-  mail: 'from-line-strong to-transparent',
-  check: 'from-good/60 to-transparent',
-}
-
-type Filter = 'all' | 'sharing' | 'verification' | 'requests'
+type Filter = AccessLogEntry['category'] | 'all'
 
 function isToday(entry: AccessLogEntry) {
   return entry.timestamp.includes('AM') || entry.timestamp.includes('PM') || entry.timestamp === 'Just now'
 }
 
 function EventCard({ entry, last }: { entry: AccessLogEntry; last: boolean }) {
-  const Icon = LOG_ICON[entry.icon]
-  const tone = TONE_CLASSES[LOG_TONE[entry.icon]]
+  const { icon: Icon, tone: toneKey } = ACTIVITY_ICON_MAP[entry.icon]
+  const tone = TONE_CLASSES[toneKey]
   return (
     <div className="relative flex gap-4">
       <div className="flex flex-col items-center">
@@ -45,10 +36,10 @@ function EventCard({ entry, last }: { entry: AccessLogEntry; last: boolean }) {
         {!last && <span aria-hidden className="mt-1 w-px flex-1 bg-line" />}
       </div>
       <GlassPanel className="relative mb-5 flex-1 overflow-hidden p-4">
-        <div aria-hidden className={cx('absolute inset-y-0 left-0 w-1 bg-gradient-to-b', LOG_STREAK[entry.icon])} />
+        <div aria-hidden className={cx('absolute inset-y-0 left-0 w-1 bg-gradient-to-b', TONE_GRADIENT_FROM[toneKey], 'to-transparent')} />
         <div className="flex items-center justify-between gap-3 pl-2">
           <span className={cx('rounded border px-2 py-0.5 font-[family-name:var(--font-mono)] text-[10px] font-semibold uppercase tracking-wider', tone.border, tone.bg, tone.text)}>
-            {LOG_CHIP_LABEL[entry.icon]}
+            {entry.label}
           </span>
           <span className="font-[family-name:var(--font-mono)] text-[11px] text-faint">{entry.timestamp}</span>
         </div>
@@ -88,16 +79,7 @@ export function Activity() {
 
       {error && <div className="mb-5 max-w-2xl"><ErrorState description={error} onRetry={() => window.location.reload()} /></div>}
 
-      <FilterPills
-        value={filter}
-        onChange={setFilter}
-        options={[
-          { value: 'all', label: 'All' },
-          { value: 'sharing', label: 'Sharing' },
-          { value: 'verification', label: 'Verification' },
-          { value: 'requests', label: 'Requests' },
-        ]}
-      />
+      <FilterPills value={filter} onChange={setFilter} options={ACTIVITY_FILTER_OPTIONS} />
 
       <div className="mt-6 max-w-2xl">
         {loading ? (

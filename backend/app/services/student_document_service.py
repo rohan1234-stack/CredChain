@@ -15,17 +15,17 @@
 
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
+from ..models.activity_log import ActivityLog
 from ..models.enums import CredentialType, StudentDocumentStatus
 from ..models.institution import Institution
 from ..models.student import Student
 from ..models.student_document import StudentDocument
 from ..schemas.student_document import StudentDocumentResponse
-from . import document_service
+from . import document_service, notification_service
 
 
 class NotAffiliatedError(Exception):
@@ -82,6 +82,32 @@ async def upload_document(
             status=StudentDocumentStatus.UNVERIFIED,
         )
         db.add(record)
+        db.flush()
+
+        log = ActivityLog(
+            actor_user_id=student.user_id,
+            action="STUDENT_DOCUMENT_SUBMITTED",
+            entity_type="student_document",
+            entity_id=record.id,
+            metadata_={"institution_id": str(institution_id)},
+        )
+        db.add(log)
+        db.flush()
+
+        institution = db.get(Institution, institution_id)
+        # A directory-only institution (never registered) has no logged-in user to notify.
+        if institution is not None and institution.user_id is not None:
+            label = custom_credential_name or credential_type.value.replace("_", " ").title()
+            notification_service.create_notification(
+                db,
+                user_id=institution.user_id,
+                title="New document submitted",
+                message=f"{student.user.full_name} submitted a {label} for review",
+                activity_log_id=log.id,
+                link_entity_type="student_document",
+                link_entity_id=record.id,
+            )
+
         db.commit()
         db.refresh(record)
         return record
@@ -159,10 +185,9 @@ def approve_document(
     if document.status not in (StudentDocumentStatus.UNVERIFIED, StudentDocumentStatus.UNDER_REVIEW):
         raise DocumentAlreadyReviewedError()
 
-    path = Path(document.storage_path)
-    if not path.exists():
+    if not document_service.document_exists(document.storage_path):
         raise DocumentFileMissingError()
-    document_bytes = path.read_bytes()
+    document_bytes = document_service.read_document(document.storage_path)
 
     from . import credential_service  # local import: avoids a service-to-service import cycle at module load time
 
@@ -188,6 +213,24 @@ def approve_document(
     document.resulting_credential_id = credential.id
     document.reviewed_at = datetime.now(timezone.utc)
     db.add(document)
+
+    # ActivityLog only, deliberately NO Notification here: issue_signed_credential (just called
+    # above) already wrote a CREDENTIAL_ISSUED ActivityLog + notified this exact student in the
+    # same logical action — a second "your document was approved" notification for the same
+    # click would be a duplicate push for one real event (see Phase 9 of the notification design:
+    # avoid multiple notifications for the same logical event through multiple paths). The
+    # ActivityLog row is still written so the feed/audit trail accurately shows the document was
+    # reviewed, not just that a credential appeared.
+    db.add(
+        ActivityLog(
+            actor_user_id=institution.user_id,
+            action="STUDENT_DOCUMENT_APPROVED",
+            entity_type="student_document",
+            entity_id=document.id,
+            metadata_={"credential_id": str(credential.id)},
+        )
+    )
+
     db.commit()
     db.refresh(document)
     return document
@@ -202,6 +245,27 @@ def reject_document(db: Session, institution: Institution, document_id: uuid.UUI
     document.rejection_reason = reason
     document.reviewed_at = datetime.now(timezone.utc)
     db.add(document)
+
+    log = ActivityLog(
+        actor_user_id=institution.user_id,
+        action="STUDENT_DOCUMENT_REJECTED",
+        entity_type="student_document",
+        entity_id=document.id,
+        metadata_={"reason": reason},
+    )
+    db.add(log)
+    db.flush()
+
+    notification_service.create_notification(
+        db,
+        user_id=document.student.user_id,
+        title="Document rejected",
+        message=f"{institution.name} rejected your submitted document",
+        activity_log_id=log.id,
+        link_entity_type="student_document",
+        link_entity_id=document.id,
+    )
+
     db.commit()
     db.refresh(document)
     return document

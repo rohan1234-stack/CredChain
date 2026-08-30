@@ -23,6 +23,7 @@ export function Requests() {
   useEffect(() => {
     getStudentRequests()
       .then(setRequests)
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Unable to load your requests. Please try again.'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -50,7 +51,7 @@ export function Requests() {
       {error && <div className="mb-5 max-w-2xl rounded-lg bg-bad-bg px-3.5 py-2.5 text-[13px] text-bad">{error}</div>}
 
       {pending.length === 0 ? (
-        <EmptyState icon={Inbox} title="No pending requests" description="When a company or university requests your credentials, they'll show up here for you to review." />
+        !error && <EmptyState icon={Inbox} title="No pending requests" description="When a company or university requests your credentials, they'll show up here for you to review." />
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {pending.map((req) => {

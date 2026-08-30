@@ -15,6 +15,7 @@ from .institution import Institution
 from .institution_certificate_request import InstitutionCertificateRequest
 from .job import Job
 from .job_application import JobApplication
+from .notification import Notification
 from .share_grant import ShareGrant, ShareGrantCredential
 from .student import Student
 from .student_document import StudentDocument
@@ -31,6 +32,7 @@ __all__ = [
     "InstitutionCertificateRequest",
     "Job",
     "JobApplication",
+    "Notification",
     "ShareGrant",
     "ShareGrantCredential",
     "Student",

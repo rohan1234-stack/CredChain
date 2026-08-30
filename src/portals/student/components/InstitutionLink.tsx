@@ -1,24 +1,45 @@
 import { useEffect, useState } from 'react'
-import { Landmark } from 'lucide-react'
+import { Landmark, Search } from 'lucide-react'
 import { useAuth } from '../../../context/AuthContext'
 import { getInstitutions, linkInstitution } from '../../../lib/api'
 import { ApiError } from '../../../lib/apiClient'
 import type { InstitutionSummary } from '../../../types'
 import { Button } from '../../../components/ui'
 import { IconTile } from '../../../components/ui/IconTile'
+import { Select } from '../../../components/ui/Input'
 
-/** Compact "which institution am I linked to" card — shows the real linked institution, or a real link action backed by GET /api/institutions + POST /students/me/institution. Never fabricates a name. */
+/**
+ * Compact "which institution am I linked to" card — shows the real linked institution, or a real
+ * link/change action backed by GET /api/institutions + POST /students/me/institution. Never
+ * fabricates a name, and never creates a new Institution row — this only ever sets
+ * Student.institution_id to an existing canonical directory row's id (see
+ * student_service.link_student_to_institution).
+ *
+ * Debounced server-side search, same as the signup-time picker (SignUp.tsx) — the directory holds
+ * 10,000+ real institutions, so this never loads more than one matching page into the browser.
+ */
 export function InstitutionLink() {
   const { user, refreshUser } = useAuth()
   const [linking, setLinking] = useState(false)
   const [institutions, setInstitutions] = useState<InstitutionSummary[]>([])
+  const [search, setSearch] = useState('')
   const [selected, setSelected] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (linking) getInstitutions().then(setInstitutions)
-  }, [linking])
+    if (!linking) return
+    const handle = setTimeout(() => {
+      setLoading(true)
+      setError(null)
+      getInstitutions({ search: search.trim() || undefined })
+        .then(setInstitutions)
+        .catch((err) => setError(err instanceof ApiError ? err.message : 'Unable to load institutions. Please try again.'))
+        .finally(() => setLoading(false))
+    }, 300)
+    return () => clearTimeout(handle)
+  }, [linking, search])
 
   async function handleLink() {
     if (!selected) return
@@ -67,19 +88,24 @@ export function InstitutionLink() {
   return (
     <div className="rounded-xl border border-line bg-surface p-4">
       <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-faint">Select your institution</p>
-      <div className="flex items-center gap-2">
-        <select
-          value={selected}
-          onChange={(e) => setSelected(e.target.value)}
-          className="w-full rounded-lg border border-line bg-surface px-3.5 py-2 text-sm text-ink outline-none focus:border-primary"
-        >
-          <option value="">Choose an institution…</option>
+      <div className="flex items-center gap-2 rounded-lg border border-line bg-canvas px-3 py-2">
+        <Search className="h-4 w-4 shrink-0 text-faint" strokeWidth={2} />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search institutions"
+          className="w-full bg-transparent text-sm text-ink outline-none placeholder:text-faint"
+        />
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <Select value={selected} onChange={(e) => setSelected(e.target.value)} className="w-full">
+          <option value="">{loading ? 'Searching…' : 'Choose an institution…'}</option>
           {institutions.map((i) => (
             <option key={i.id} value={i.id}>
               {i.name}
             </option>
           ))}
-        </select>
+        </Select>
         <Button variant="solid" size="sm" loading={submitting} disabled={!selected} onClick={handleLink}>
           Link
         </Button>
@@ -87,6 +113,9 @@ export function InstitutionLink() {
           Cancel
         </Button>
       </div>
+      {!loading && !error && search.trim() && institutions.length === 0 && (
+        <p className="mt-2 text-[12px] text-faint">No institutions matched "{search.trim()}".</p>
+      )}
       {error && <p className="mt-2 text-[13px] text-bad">{error}</p>}
     </div>
   )

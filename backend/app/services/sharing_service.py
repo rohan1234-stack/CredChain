@@ -12,7 +12,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func
+from sqlalchemy import String, cast, func, or_
 from sqlalchemy.orm import Session
 
 from ..models.activity_log import ActivityLog
@@ -20,10 +20,22 @@ from ..models.company import Company
 from ..models.credential import Credential
 from ..models.credential_request import CredentialRequest
 from ..models.enums import CredentialRequestStatus, SharePermission
+from ..models.institution import Institution
 from ..models.share_grant import ShareGrant, ShareGrantCredential
 from ..models.student import Student
-from ..schemas.sharing import ALLOWED_EXPIRY_DAYS, CredentialRequestResponse, ShareCredentialPreview, ShareGrantResponse
+from ..models.user import User
+from ..models.verification_event import VerificationEvent
+from ..schemas.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page
+from ..schemas.sharing import (
+    ALLOWED_EXPIRY_DAYS,
+    SHARED_CREDENTIAL_STATUS_FILTERS,
+    CredentialRequestResponse,
+    ShareCredentialPreview,
+    ShareGrantResponse,
+    SharedCredentialItem,
+)
 from ..security.tokens import generate_raw_token, hash_token
+from . import notification_service
 
 
 class StudentNotFoundError(Exception):
@@ -51,6 +63,18 @@ class CredentialSelectionError(Exception):
 
 
 class CompanyNotFoundError(Exception):
+    pass
+
+
+class CompanyNotRegisteredError(Exception):
+    """
+    Raised when a direct share targets a directory-only Company (user_id is
+    NULL). Such a row can never have a logged-in verifier — authorization_service
+    only ever matches a grant against current_user.company — so a share created
+    against it could never be redeemed by anyone. Not an authorization change:
+    this only narrows what create_direct_share accepts as input.
+    """
+
     pass
 
 
@@ -120,15 +144,26 @@ def create_credential_request(
     db.add(request)
     db.flush()
 
-    db.add(
-        ActivityLog(
-            actor_user_id=company.user_id,
-            action="CREDENTIAL_REQUEST_CREATED",
-            entity_type="credential_request",
-            entity_id=request.id,
-            metadata_={"student_id": str(student.id), "purpose": purpose},
-        )
+    log = ActivityLog(
+        actor_user_id=company.user_id,
+        action="CREDENTIAL_REQUEST_CREATED",
+        entity_type="credential_request",
+        entity_id=request.id,
+        metadata_={"student_id": str(student.id), "purpose": purpose},
     )
+    db.add(log)
+    db.flush()
+
+    notification_service.create_notification(
+        db,
+        user_id=student.user_id,
+        title="New credential request",
+        message=f"{company.name} requested your credentials",
+        activity_log_id=log.id,
+        link_entity_type="credential_request",
+        link_entity_id=request.id,
+    )
+
     db.commit()
     db.refresh(request)
     return request
@@ -169,15 +204,28 @@ def decline_request(db: Session, student: Student, request_id: uuid.UUID) -> Cre
     request.responded_at = datetime.now(timezone.utc)
     db.add(request)
 
-    db.add(
-        ActivityLog(
-            actor_user_id=student.user_id,
-            action="CREDENTIAL_REQUEST_DECLINED",
-            entity_type="credential_request",
-            entity_id=request.id,
-            metadata_={"company_id": str(request.company_id)},
-        )
+    log = ActivityLog(
+        actor_user_id=student.user_id,
+        action="CREDENTIAL_REQUEST_DECLINED",
+        entity_type="credential_request",
+        entity_id=request.id,
+        metadata_={"company_id": str(request.company_id)},
     )
+    db.add(log)
+    db.flush()
+
+    company = db.get(Company, request.company_id)
+    if company is not None and company.user_id is not None:
+        notification_service.create_notification(
+            db,
+            user_id=company.user_id,
+            title="Credential request declined",
+            message=f"{student.user.full_name} declined your credential request",
+            activity_log_id=log.id,
+            link_entity_type="credential_request",
+            link_entity_id=request.id,
+        )
+
     db.commit()
     db.refresh(request)
     return request
@@ -205,6 +253,7 @@ def _create_share_grant(
     expires_in_days: int,
     permission: SharePermission,
     credential_request_id: uuid.UUID | None,
+    notify: bool = True,
 ) -> tuple[ShareGrant, str]:
     """
     The ONE place a ShareGrant + ShareGrantCredential rows + secure token are
@@ -212,6 +261,16 @@ def _create_share_grant(
     and create_direct_share (credential_request_id null). Returns (grant,
     raw_token); the raw token is NOT persisted anywhere, the caller (the
     route) must hand it to the client and then let it go.
+
+    notify=False lets job_application_service.apply_to_job suppress this
+    grant's own notification: applying to a job already sends the company
+    one clear "new application" notification, and also routes through this
+    function internally (via approve_request) to create the real share — a
+    second "credentials shared with you" notification for that exact same
+    click would be a duplicate push for one logical event (see Phase 9 of
+    the notification design). Every genuinely standalone caller (a real
+    approve_request or create_direct_share invoked by a student acting on
+    their own) leaves this True.
     """
     raw_token = generate_raw_token()
     token_hash = hash_token(raw_token)
@@ -231,15 +290,34 @@ def _create_share_grant(
     for credential in credentials:
         db.add(ShareGrantCredential(share_grant_id=grant.id, credential_id=credential.id))
 
-    db.add(
-        ActivityLog(
-            actor_user_id=student.user_id,
-            action="CREDENTIAL_SHARED",
-            entity_type="share_grant",
-            entity_id=grant.id,
-            metadata_={"company_id": str(company_id), "credential_count": len(credentials)},
-        )
+    log = ActivityLog(
+        actor_user_id=student.user_id,
+        action="CREDENTIAL_SHARED",
+        entity_type="share_grant",
+        entity_id=grant.id,
+        metadata_={"company_id": str(company_id), "credential_count": len(credentials)},
     )
+    db.add(log)
+    db.flush()
+
+    if notify:
+        company = db.get(Company, company_id)
+        # Sharing already requires an existing, real company row (the recipient search this
+        # links from only ever offers registered companies — see ShareFlow.tsx) — a directory-only
+        # company can never be a share recipient, but guard anyway since this function has no
+        # other way to enforce that invariant itself.
+        if company is not None and company.user_id is not None:
+            label = credentials[0].title if len(credentials) == 1 else f"{len(credentials)} credentials"
+            notification_service.create_notification(
+                db,
+                user_id=company.user_id,
+                title="Credentials shared with you",
+                message=f"{student.user.full_name} shared {label} with {company.name}",
+                activity_log_id=log.id,
+                link_entity_type="share_grant",
+                link_entity_id=grant.id,
+            )
+
     return grant, raw_token
 
 
@@ -251,6 +329,7 @@ def approve_request(
     credential_ids: list[uuid.UUID],
     expires_in_days: int,
     permission: SharePermission = SharePermission.VIEW_ONLY,
+    notify: bool = True,
 ) -> tuple[ShareGrant, str]:
     """
     Creates the ShareGrant + ShareGrantCredential rows AND the secure token
@@ -261,6 +340,14 @@ def approve_request(
     company's original ask; _create_share_grant is the only place a
     ShareGrant is actually created, and it only ever grants what's in
     credential_ids).
+
+    notify=False is used by job_application_service.apply_to_job, which
+    calls this to fulfil a system-generated request as part of applying to
+    a job — that flow sends its own single, more specific "new application"
+    notification instead (see _create_share_grant's docstring for the full
+    duplicate-notification rationale). Every genuine, student-initiated
+    approval (the real /api/credential-requests/{id}/approve route) leaves
+    this True.
     """
     if expires_in_days not in ALLOWED_EXPIRY_DAYS:
         raise InvalidExpiryError(f"expires_in_days must be one of {ALLOWED_EXPIRY_DAYS}")
@@ -278,21 +365,35 @@ def approve_request(
         expires_in_days=expires_in_days,
         permission=permission,
         credential_request_id=request.id,
+        notify=notify,
     )
 
     request.status = CredentialRequestStatus.APPROVED
     request.responded_at = datetime.now(timezone.utc)
     db.add(request)
 
-    db.add(
-        ActivityLog(
-            actor_user_id=student.user_id,
-            action="CREDENTIAL_REQUEST_APPROVED",
-            entity_type="credential_request",
-            entity_id=request.id,
-            metadata_={"company_id": str(request.company_id), "credential_count": len(credentials)},
-        )
+    log = ActivityLog(
+        actor_user_id=student.user_id,
+        action="CREDENTIAL_REQUEST_APPROVED",
+        entity_type="credential_request",
+        entity_id=request.id,
+        metadata_={"company_id": str(request.company_id), "credential_count": len(credentials)},
     )
+    db.add(log)
+    db.flush()
+
+    if notify:
+        company = db.get(Company, request.company_id)
+        if company is not None and company.user_id is not None:
+            notification_service.create_notification(
+                db,
+                user_id=company.user_id,
+                title="Credential request approved",
+                message=f"{student.user.full_name} approved your credential request",
+                activity_log_id=log.id,
+                link_entity_type="credential_request",
+                link_entity_id=request.id,
+            )
 
     db.commit()
     db.refresh(grant)
@@ -323,6 +424,8 @@ def create_direct_share(
     company = db.get(Company, company_id)
     if company is None:
         raise CompanyNotFoundError()
+    if company.user_id is None:
+        raise CompanyNotRegisteredError()
 
     credentials = _resolve_and_validate_credentials(db, student, credential_ids)
 
@@ -352,6 +455,136 @@ def list_shares_for_company(db: Session, company: Company) -> list[ShareGrant]:
     return db.query(ShareGrant).filter(ShareGrant.company_id == company.id).order_by(ShareGrant.created_at.desc()).all()
 
 
+class InvalidSharedCredentialStatusFilterError(Exception):
+    pass
+
+
+def list_shared_credentials_for_company(
+    db: Session,
+    company: Company,
+    *,
+    search: str | None = None,
+    status: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+) -> tuple[list[SharedCredentialItem], int]:
+    """
+    The "Credentials Shared With You" inbox — one row per (share_grant,
+    credential) pair, scoped to exactly this company's own canonical
+    company_id (the same authorization boundary company_id already
+    enforces everywhere else; nothing new here). Backend-paginated and
+    backend-searched/filtered so the frontend never has to load more than
+    one page, matching the existing institution/company directory pattern
+    (see company_service.list_companies).
+
+    status, when given, must be one of SHARED_CREDENTIAL_STATUS_FILTERS and
+    filters by the LATEST real VerificationEvent.result this company
+    recorded for that credential — never by share/credential status alone,
+    since a "VERIFIED" badge must mean an actual cryptographic check
+    happened (see SharedCredentialItem's docstring). There is deliberately
+    no way to filter for "not yet verified" — that's a display state, not a
+    stored event to query against.
+    """
+    if status is not None and status not in SHARED_CREDENTIAL_STATUS_FILTERS:
+        raise InvalidSharedCredentialStatusFilterError(
+            f"status must be one of {SHARED_CREDENTIAL_STATUS_FILTERS}, got {status!r}"
+        )
+
+    page = max(1, page)
+    page_size = max(1, min(page_size, MAX_PAGE_SIZE))
+
+    # This credential's most recent verification result AS SEEN BY THIS COMPANY specifically
+    # (never another company's checks on the same credential) — one windowed subquery, joined
+    # once, rather than two independent correlated subqueries, so result/verified_at always come
+    # from the exact same event row even if two events somehow share a timestamp.
+    latest_event_subq = (
+        db.query(
+            VerificationEvent.credential_id.label("credential_id"),
+            VerificationEvent.result.label("result"),
+            VerificationEvent.verified_at.label("verified_at"),
+            func.row_number()
+            .over(partition_by=VerificationEvent.credential_id, order_by=VerificationEvent.verified_at.desc())
+            .label("rn"),
+        )
+        .filter(VerificationEvent.company_id == company.id)
+        .subquery()
+    )
+
+    query = (
+        db.query(
+            Credential,
+            Student,
+            User,
+            Institution,
+            ShareGrant,
+            latest_event_subq.c.result,
+            latest_event_subq.c.verified_at,
+        )
+        .join(ShareGrantCredential, ShareGrantCredential.credential_id == Credential.id)
+        .join(ShareGrant, ShareGrant.id == ShareGrantCredential.share_grant_id)
+        .join(Student, Student.id == ShareGrant.student_id)
+        .join(User, User.id == Student.user_id)
+        .join(Institution, Institution.id == Credential.institution_id)
+        .outerjoin(
+            latest_event_subq,
+            (latest_event_subq.c.credential_id == Credential.id) & (latest_event_subq.c.rn == 1),
+        )
+        .filter(ShareGrant.company_id == company.id)
+    )
+
+    if search:
+        needle = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                User.full_name.ilike(needle),
+                Credential.title.ilike(needle),
+                cast(Credential.credential_type, String).ilike(needle),
+                Institution.name.ilike(needle),
+            )
+        )
+
+    if status is not None:
+        query = query.filter(latest_event_subq.c.result == status.upper())
+
+    total = query.count()
+    rows = (
+        query.order_by(ShareGrant.created_at.desc(), Credential.id)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    items = [
+        SharedCredentialItem(
+            id=credential.id,
+            share_id=grant.id,
+            student_id=student.id,
+            student_name=user.full_name,
+            credential_type=credential.credential_type,
+            title=credential.title,
+            degree=credential.degree,
+            graduation_year=credential.graduation_year,
+            cgpa=float(credential.cgpa) if credential.cgpa is not None else None,
+            institution_name=institution.name,
+            issued_at=credential.issued_at,
+            permission=grant.permission.value,
+            share_status=_share_status(grant),
+            shared_at=grant.created_at,
+            share_expires_at=grant.expires_at,
+            latest_verification_result=latest_result.value if latest_result is not None else None,
+            latest_verified_at=latest_verified_at,
+        )
+        for credential, student, user, institution, grant, latest_result, latest_verified_at in rows
+    ]
+    return items, total
+
+
+def to_shared_credentials_page_response(
+    items: list[SharedCredentialItem], *, total: int, page: int, page_size: int
+) -> Page[SharedCredentialItem]:
+    return Page.of(items, page=page, page_size=page_size, total=total)
+
+
 def revoke_share(db: Session, student: Student, share_id: uuid.UUID) -> ShareGrant:
     grant = db.get(ShareGrant, share_id)
     if grant is None:
@@ -364,15 +597,34 @@ def revoke_share(db: Session, student: Student, share_id: uuid.UUID) -> ShareGra
     grant.revoked_at = datetime.now(timezone.utc)
     db.add(grant)
 
-    db.add(
-        ActivityLog(
-            actor_user_id=student.user_id,
-            action="SHARE_REVOKED",
-            entity_type="share_grant",
-            entity_id=grant.id,
-            metadata_={"company_id": str(grant.company_id)},
-        )
+    log = ActivityLog(
+        actor_user_id=student.user_id,
+        action="SHARE_REVOKED",
+        entity_type="share_grant",
+        entity_id=grant.id,
+        metadata_={"company_id": str(grant.company_id)},
     )
+    db.add(log)
+    db.flush()
+
+    company = grant.company
+    # A directory-only company (never registered, no login) can never actually
+    # have been a share recipient in the first place — _create_share_grant's
+    # own guard already prevents that — but this function has no other way to
+    # enforce that invariant itself, so it's checked again here.
+    if company is not None and company.user_id is not None:
+        credentials = grant.credentials
+        label = credentials[0].title if len(credentials) == 1 else f"{len(credentials)} credentials"
+        notification_service.create_notification(
+            db,
+            user_id=company.user_id,
+            title="Credential Share Revoked",
+            message=f"{student.user.full_name} revoked your access to {label}",
+            activity_log_id=log.id,
+            link_entity_type="share_grant",
+            link_entity_id=grant.id,
+        )
+
     db.commit()
     db.refresh(grant)
     return grant

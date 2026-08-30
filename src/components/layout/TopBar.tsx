@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, LogOut, Menu } from 'lucide-react'
 import { InitialsAvatar } from '../ui/IconTile'
 import { useAuth } from '../../context/AuthContext'
+import { NotificationBell } from './NotificationBell'
 import type { User, Role } from '../../types'
 
 const ROLE_LABEL: Record<Role, string> = {
   student: 'Student',
   institution: 'Institution',
   verifier: 'Company',
+  admin: 'Admin',
 }
 
 export function TopBar({ user, onMenuClick }: { user: User; onMenuClick?: () => void }) {
@@ -52,6 +54,7 @@ export function TopBar({ user, onMenuClick }: { user: User; onMenuClick?: () => 
         <Menu className="h-5 w-5" strokeWidth={2} />
       </button>
       <div className="ml-auto flex items-center gap-3">
+        <NotificationBell role={user.role} />
         <div ref={menuRef} className="relative">
           <button
             onClick={() => setOpen((v) => !v)}

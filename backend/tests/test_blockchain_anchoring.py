@@ -66,8 +66,14 @@ def _register(client, *, role, email, **extra):
     return resp.json()
 
 
-def _register_institution(client, email="anchor-inst@test.credchain.dev", name="Anchor University"):
-    body = _register(client, role="institution", email=email, institution_name=name)
+def _register_institution(client, db_session, email="anchor-inst@test.credchain.dev", name="Anchor University"):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
+    body = _register(client, role="institution", email=email, institution_id=str(institution.id))
     return {"token": body["access_token"], "institution_id": body["user"]["institution_id"]}
 
 
@@ -82,8 +88,14 @@ def _register_student(client, db_session, institution_id, email="anchor-student@
     return {"token": body["access_token"], "student_id": student_id}
 
 
-def _register_verifier(client, email="anchor-verifier@test.credchain.dev", name="Anchor Company"):
-    body = _register(client, role="verifier", email=email, company_name=name)
+def _register_verifier(client, db_session, email="anchor-verifier@test.credchain.dev", name="Anchor Company"):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
+    body = _register(client, role="verifier", email=email, company_id=str(company.id))
     return {"token": body["access_token"], "company_id": body["user"]["company_id"]}
 
 
@@ -106,7 +118,7 @@ def _issue(client, institution_token, student_id, **overrides) -> dict:
 
 
 def _setup(client, db_session):
-    inst = _register_institution(client)
+    inst = _register_institution(client, db_session)
     student = _register_student(client, db_session, inst["institution_id"])
     credential = _issue(client, inst["token"], student["student_id"])
     return {"inst": inst, "student": student, "credential": credential}
@@ -159,7 +171,7 @@ def test_student_cannot_anchor(client, db_session):
 
 def test_company_cannot_anchor(client, db_session):
     ctx = _setup(client, db_session)
-    verifier = _register_verifier(client)
+    verifier = _register_verifier(client, db_session)
     resp = client.post(f"/api/credentials/{ctx['credential']['id']}/anchor", headers=_auth_header(verifier["token"]))
     assert resp.status_code == 403
 
@@ -178,7 +190,7 @@ def test_unauthenticated_cannot_anchor(client, db_session):
 
 def test_institution_cannot_anchor_another_institutions_credential(client, db_session):
     ctx = _setup(client, db_session)
-    other_inst = _register_institution(client, email="other-anchor-inst@test.credchain.dev", name="Other University")
+    other_inst = _register_institution(client, db_session, email="other-anchor-inst@test.credchain.dev", name="Other University")
 
     resp = client.post(f"/api/credentials/{ctx['credential']['id']}/anchor", headers=_auth_header(other_inst["token"]))
     assert resp.status_code == 403
@@ -317,7 +329,7 @@ def test_verification_unaffected_by_anchoring(client, db_session):
     from app.models.share_grant import ShareGrant, ShareGrantCredential
 
     ctx = _setup(client, db_session)
-    verifier = _register_verifier(client, email="anchor-verify-check@test.credchain.dev")
+    verifier = _register_verifier(client, db_session, email="anchor-verify-check@test.credchain.dev")
 
     grant = ShareGrant(
         student_id=uuid.UUID(ctx["student"]["student_id"]),

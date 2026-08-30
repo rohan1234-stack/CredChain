@@ -22,20 +22,32 @@ def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_verifier(client, email, name):
+def _register_verifier(client, db_session, email, name):
+    from app.models.company import Company
+
+    company = Company(name=name)
+    db_session.add(company)
+    db_session.commit()
+    db_session.refresh(company)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Elig Verifier", "role": "verifier", "company_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Elig Verifier", "role": "verifier", "company_id": str(company.id)},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     return {"token": body["access_token"], "company_id": body["user"]["company_id"]}
 
 
-def _register_institution(client, email, name):
+def _register_institution(client, db_session, email, name):
+    from app.models.institution import Institution
+
+    institution = Institution(name=name)
+    db_session.add(institution)
+    db_session.commit()
+    db_session.refresh(institution)
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "Password123", "full_name": "Elig Inst", "role": "institution", "institution_name": name},
+        json={"email": email, "password": "Password123", "full_name": "Elig Inst", "role": "institution", "institution_id": str(institution.id)},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
@@ -86,8 +98,8 @@ def _create_open_job(client, verifier_token, **overrides):
 
 def test_cgpa_96_vs_required_90_is_eligible(client, db_session):
     """The exact reported scenario: a real 9.6 CGPA against a 9.0 minimum must PASS."""
-    verifier = _register_verifier(client, "elig-co-1@test.credchain.dev", "Elig Co 1")
-    inst = _register_institution(client, "elig-inst-1@test.credchain.dev", "Elig University 1")
+    verifier = _register_verifier(client, db_session, "elig-co-1@test.credchain.dev", "Elig Co 1")
+    inst = _register_institution(client, db_session, "elig-inst-1@test.credchain.dev", "Elig University 1")
     student = _register_student(client, inst["institution_id"], "elig-stu-1@test.credchain.dev", "ELIG-STU-1")
     job = _create_open_job(client, verifier["token"], minimum_cgpa=9.0)
 
@@ -102,8 +114,8 @@ def test_cgpa_96_vs_required_90_is_eligible(client, db_session):
 
 
 def test_cgpa_89_vs_required_90_fails(client, db_session):
-    verifier = _register_verifier(client, "elig-co-2@test.credchain.dev", "Elig Co 2")
-    inst = _register_institution(client, "elig-inst-2@test.credchain.dev", "Elig University 2")
+    verifier = _register_verifier(client, db_session, "elig-co-2@test.credchain.dev", "Elig Co 2")
+    inst = _register_institution(client, db_session, "elig-inst-2@test.credchain.dev", "Elig University 2")
     student = _register_student(client, inst["institution_id"], "elig-stu-2@test.credchain.dev", "ELIG-STU-2")
     job = _create_open_job(client, verifier["token"], minimum_cgpa=9.0)
 
@@ -118,8 +130,8 @@ def test_cgpa_89_vs_required_90_fails(client, db_session):
 
 def test_missing_cgpa_is_incomplete_not_a_silent_pass_or_fail(client, db_session):
     """The real root cause of the reported bug: a genuinely missing value must be its own state, not folded into met/not_met."""
-    verifier = _register_verifier(client, "elig-co-3@test.credchain.dev", "Elig Co 3")
-    inst = _register_institution(client, "elig-inst-3@test.credchain.dev", "Elig University 3")
+    verifier = _register_verifier(client, db_session, "elig-co-3@test.credchain.dev", "Elig Co 3")
+    inst = _register_institution(client, db_session, "elig-inst-3@test.credchain.dev", "Elig University 3")
     student = _register_student(client, inst["institution_id"], "elig-stu-3@test.credchain.dev", "ELIG-STU-3")
     job = _create_open_job(client, verifier["token"], minimum_cgpa=9.0)
 
@@ -135,8 +147,8 @@ def test_missing_cgpa_is_incomplete_not_a_silent_pass_or_fail(client, db_session
 
 
 def test_degree_exact_match_passes(client, db_session):
-    verifier = _register_verifier(client, "elig-co-4@test.credchain.dev", "Elig Co 4")
-    inst = _register_institution(client, "elig-inst-4@test.credchain.dev", "Elig University 4")
+    verifier = _register_verifier(client, db_session, "elig-co-4@test.credchain.dev", "Elig Co 4")
+    inst = _register_institution(client, db_session, "elig-inst-4@test.credchain.dev", "Elig University 4")
     student = _register_student(client, inst["institution_id"], "elig-stu-4@test.credchain.dev", "ELIG-STU-4")
     job = _create_open_job(client, verifier["token"], required_degree="B.Tech Computer Science")
 
@@ -149,8 +161,8 @@ def test_degree_exact_match_passes(client, db_session):
 
 
 def test_wrong_degree_fails(client, db_session):
-    verifier = _register_verifier(client, "elig-co-5@test.credchain.dev", "Elig Co 5")
-    inst = _register_institution(client, "elig-inst-5@test.credchain.dev", "Elig University 5")
+    verifier = _register_verifier(client, db_session, "elig-co-5@test.credchain.dev", "Elig Co 5")
+    inst = _register_institution(client, db_session, "elig-inst-5@test.credchain.dev", "Elig University 5")
     student = _register_student(client, inst["institution_id"], "elig-stu-5@test.credchain.dev", "ELIG-STU-5")
     job = _create_open_job(client, verifier["token"], required_degree="B.Tech Computer Science")
 
@@ -163,8 +175,8 @@ def test_wrong_degree_fails(client, db_session):
 
 
 def test_graduation_year_match_passes_and_mismatch_fails(client, db_session):
-    verifier = _register_verifier(client, "elig-co-6@test.credchain.dev", "Elig Co 6")
-    inst = _register_institution(client, "elig-inst-6@test.credchain.dev", "Elig University 6")
+    verifier = _register_verifier(client, db_session, "elig-co-6@test.credchain.dev", "Elig Co 6")
+    inst = _register_institution(client, db_session, "elig-inst-6@test.credchain.dev", "Elig University 6")
     student_ok = _register_student(client, inst["institution_id"], "elig-stu-6a@test.credchain.dev", "ELIG-STU-6A")
     student_bad = _register_student(client, inst["institution_id"], "elig-stu-6b@test.credchain.dev", "ELIG-STU-6B")
     job = _create_open_job(client, verifier["token"], graduation_year_requirement=2026)
@@ -179,8 +191,8 @@ def test_graduation_year_match_passes_and_mismatch_fails(client, db_session):
 
 
 def test_revoked_credential_does_not_count_as_eligibility_evidence(client, db_session):
-    verifier = _register_verifier(client, "elig-co-7@test.credchain.dev", "Elig Co 7")
-    inst = _register_institution(client, "elig-inst-7@test.credchain.dev", "Elig University 7")
+    verifier = _register_verifier(client, db_session, "elig-co-7@test.credchain.dev", "Elig Co 7")
+    inst = _register_institution(client, db_session, "elig-inst-7@test.credchain.dev", "Elig University 7")
     student = _register_student(client, inst["institution_id"], "elig-stu-7@test.credchain.dev", "ELIG-STU-7")
     job = _create_open_job(client, verifier["token"], minimum_cgpa=9.0)
 
@@ -194,8 +206,8 @@ def test_revoked_credential_does_not_count_as_eligibility_evidence(client, db_se
 
 
 def test_combined_requirements_all_pass_together(client, db_session):
-    verifier = _register_verifier(client, "elig-co-8@test.credchain.dev", "Elig Co 8")
-    inst = _register_institution(client, "elig-inst-8@test.credchain.dev", "Elig University 8")
+    verifier = _register_verifier(client, db_session, "elig-co-8@test.credchain.dev", "Elig Co 8")
+    inst = _register_institution(client, db_session, "elig-inst-8@test.credchain.dev", "Elig University 8")
     student = _register_student(client, inst["institution_id"], "elig-stu-8@test.credchain.dev", "ELIG-STU-8")
     job = _create_open_job(
         client, verifier["token"], required_degree="B.Tech CSE", minimum_cgpa=9.0, graduation_year_requirement=2026
@@ -211,8 +223,8 @@ def test_combined_requirements_all_pass_together(client, db_session):
 
 def test_ai_job_analysis_uses_the_same_deterministic_eligibility(client, db_session):
     """Single source of truth: the AI endpoint's eligibility section must match the job endpoint's, never a second computation."""
-    verifier = _register_verifier(client, "elig-co-9@test.credchain.dev", "Elig Co 9")
-    inst = _register_institution(client, "elig-inst-9@test.credchain.dev", "Elig University 9")
+    verifier = _register_verifier(client, db_session, "elig-co-9@test.credchain.dev", "Elig Co 9")
+    inst = _register_institution(client, db_session, "elig-inst-9@test.credchain.dev", "Elig University 9")
     student = _register_student(client, inst["institution_id"], "elig-stu-9@test.credchain.dev", "ELIG-STU-9")
     job = _create_open_job(client, verifier["token"], minimum_cgpa=9.0)
 

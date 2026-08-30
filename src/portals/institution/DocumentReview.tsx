@@ -61,6 +61,7 @@ export function DocumentReview() {
   function load() {
     getInstitutionDocuments()
       .then(setDocuments)
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Unable to load documents. Please try again.'))
       .finally(() => setLoading(false))
   }
 
@@ -131,7 +132,7 @@ export function DocumentReview() {
       {error && <div className="mb-5 max-w-2xl rounded-lg bg-bad-bg px-3.5 py-2.5 text-[13px] text-bad">{error}</div>}
 
       {documents.length === 0 ? (
-        <EmptyState icon={ShieldQuestion} title="No documents to review" description="When a student uploads an existing document, it will show up here." />
+        !error && <EmptyState icon={ShieldQuestion} title="No documents to review" description="When a student uploads an existing document, it will show up here." />
       ) : (
         <div className="space-y-3">
           {documents.map((d) => (

@@ -138,26 +138,29 @@ export const accessLog: AccessLogEntry[] = [
   {
     id: 'log-1',
     category: 'verification',
+    label: 'Credential Verified',
     actor: 'ABC Technologies',
     action: 'Transcript verified',
     timestamp: '10:42 AM',
-    icon: 'shield',
+    icon: 'verified',
   },
   {
     id: 'log-2',
     category: 'requests',
+    label: 'Credential Request Created',
     actor: 'ABC Technologies',
     action: 'Credential request received',
     timestamp: '10:31 AM',
-    icon: 'mail',
+    icon: 'request',
   },
   {
     id: 'log-3',
     category: 'sharing',
+    label: 'Credential Shared',
     actor: 'XYZ University',
     action: 'Degree shared',
     timestamp: 'Yesterday',
-    icon: 'check',
+    icon: 'shared',
   },
 ]
 
@@ -165,18 +168,20 @@ export const institutionActivity: AccessLogEntry[] = [
   {
     id: 'iact-1',
     category: 'verification',
+    label: 'Credential Verified',
     actor: 'ABC Technologies',
     action: 'Final Transcript verified',
     timestamp: '10:42 AM',
-    icon: 'shield',
+    icon: 'verified',
   },
   {
     id: 'iact-2',
-    category: 'sharing',
+    category: 'credential',
+    label: 'Credential Issued',
     actor: 'Rahul Kumar',
     action: 'Migration Certificate issued',
     timestamp: 'Yesterday',
-    icon: 'check',
+    icon: 'issued',
   },
 ]
 

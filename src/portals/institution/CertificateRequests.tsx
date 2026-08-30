@@ -4,7 +4,7 @@ import { ClipboardList, CalendarDays } from 'lucide-react'
 import { approveCertificateRequest, getInstitutionCertificateRequests, rejectCertificateRequest } from '../../lib/api'
 import { ApiError } from '../../lib/apiClient'
 import type { InstitutionCertificateRequest, InstitutionRequestStatus } from '../../types'
-import { PageHeader, Card, Button, Badge, EmptyState, CheckRow } from '../../components/ui'
+import { PageHeader, Card, Button, Badge, EmptyState, CheckRow, WorkflowTimeline, buildCertificateRequestSteps } from '../../components/ui'
 import { SkeletonCard } from '../../components/ui/Skeleton'
 
 const TYPE_LABELS: Record<string, string> = {
@@ -40,6 +40,11 @@ interface RequestGroup {
   items: InstitutionCertificateRequest[]
 }
 
+/** Same URL/query-param shape the existing APPROVED -> "Issue Credential" button already builds. */
+function issueUrl(r: InstitutionCertificateRequest): string {
+  return `/institution/credentials/issue?studentId=${r.student_id}&credentialType=${r.credential_type}&fulfillsRequestId=${r.id}`
+}
+
 function groupRequests(requests: InstitutionCertificateRequest[]): RequestGroup[] {
   const groups = new Map<string, RequestGroup>()
   for (const r of requests) {
@@ -61,6 +66,7 @@ export function InstitutionCertificateRequests() {
   const [requests, setRequests] = useState<InstitutionCertificateRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [issuingId, setIssuingId] = useState<string | null>(null)
   const [rejectingId, setRejectingId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -68,6 +74,7 @@ export function InstitutionCertificateRequests() {
   function load() {
     getInstitutionCertificateRequests()
       .then(setRequests)
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Unable to load certificate requests. Please try again.'))
       .finally(() => setLoading(false))
   }
 
@@ -90,6 +97,33 @@ export function InstitutionCertificateRequests() {
     } finally {
       setBusyId(null)
     }
+  }
+
+  async function handleApproveAndIssue(r: InstitutionCertificateRequest) {
+    setIssuingId(r.id)
+    setError(null)
+    try {
+      const updated = await approveCertificateRequest(r.id)
+      setRequests((prev) => prev.map((x) => (x.id === r.id ? updated : x)))
+      navigate(issueUrl(updated))
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not approve this request.')
+    } finally {
+      setIssuingId(null)
+    }
+  }
+
+  // Reject-reason state is scoped to whichever request is currently being
+  // rejected — always reset on open/cancel so a reason typed for one
+  // student's request can never reappear when rejecting a different one.
+  function handleStartReject(id: string) {
+    setRejectingId(id)
+    setRejectReason('')
+  }
+
+  function handleCancelReject() {
+    setRejectingId(null)
+    setRejectReason('')
   }
 
   async function handleReject(id: string) {
@@ -117,7 +151,7 @@ export function InstitutionCertificateRequests() {
       {error && <div className="mb-5 max-w-2xl rounded-lg bg-bad-bg px-3.5 py-2.5 text-[13px] text-bad">{error}</div>}
 
       {groups.length === 0 ? (
-        <EmptyState icon={ClipboardList} title="No certificate requests" description="When a student requests a certificate, it will show up here." />
+        !error && <EmptyState icon={ClipboardList} title="No certificate requests" description="When a student requests a certificate, it will show up here." />
       ) : (
         <div className="space-y-3">
           {groups.map((g) => (
@@ -162,9 +196,9 @@ export function InstitutionCertificateRequests() {
                         {r.status}
                       </Badge>
                     </div>
-                    {r.status === 'rejected' && r.rejection_reason && (
-                      <p className="mt-0.5 text-[11px] text-bad">Reason: {r.rejection_reason}</p>
-                    )}
+                    <div className="mt-3 rounded-lg border border-line/60 bg-canvas-2/40 px-3 py-2.5">
+                      <WorkflowTimeline steps={buildCertificateRequestSteps(r)} />
+                    </div>
 
                     {r.status === 'pending' && (
                       <div className="mt-2">
@@ -175,10 +209,11 @@ export function InstitutionCertificateRequests() {
                               onChange={(e) => setRejectReason(e.target.value)}
                               placeholder="Reason for rejection"
                               rows={2}
-                              className="w-full rounded-lg border border-line bg-surface px-3.5 py-2.5 text-sm text-ink outline-none focus:border-primary"
+                              disabled={busyId === r.id}
+                              className="w-full rounded-lg border border-line bg-surface px-3.5 py-2.5 text-sm text-ink outline-none focus:border-primary disabled:opacity-60"
                             />
                             <div className="flex gap-2">
-                              <Button variant="outline" size="sm" onClick={() => setRejectingId(null)}>
+                              <Button variant="outline" size="sm" disabled={busyId === r.id} onClick={() => handleCancelReject()}>
                                 Cancel
                               </Button>
                               <Button variant="solid" size="sm" loading={busyId === r.id} onClick={() => handleReject(r.id)}>
@@ -187,12 +222,32 @@ export function InstitutionCertificateRequests() {
                             </div>
                           </div>
                         ) : (
-                          <div className="flex gap-2">
-                            <Button variant="outline" size="sm" onClick={() => setRejectingId(r.id)}>
-                              Reject
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              variant="solid"
+                              size="sm"
+                              loading={issuingId === r.id}
+                              disabled={busyId === r.id}
+                              onClick={() => handleApproveAndIssue(r)}
+                            >
+                              Approve & Issue
                             </Button>
-                            <Button variant="solid" size="sm" loading={busyId === r.id} onClick={() => handleApprove(r.id)}>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              loading={busyId === r.id}
+                              disabled={issuingId === r.id}
+                              onClick={() => handleApprove(r.id)}
+                            >
                               Approve
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={busyId === r.id || issuingId === r.id}
+                              onClick={() => handleStartReject(r.id)}
+                            >
+                              Reject
                             </Button>
                           </div>
                         )}
@@ -201,15 +256,7 @@ export function InstitutionCertificateRequests() {
 
                     {r.status === 'approved' && (
                       <div className="mt-2">
-                        <Button
-                          variant="solid"
-                          size="sm"
-                          onClick={() =>
-                            navigate(
-                              `/institution/credentials/issue?studentId=${r.student_id}&credentialType=${r.credential_type}&fulfillsRequestId=${r.id}`
-                            )
-                          }
-                        >
+                        <Button variant="solid" size="sm" onClick={() => navigate(issueUrl(r))}>
                           Issue Credential
                         </Button>
                       </div>
