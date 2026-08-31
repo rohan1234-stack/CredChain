@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Landmark, MapPin, Globe, ArrowRight, GraduationCap, ShieldCheck } from 'lucide-react'
 import { getInstitutionsPage } from '../../lib/api'
@@ -37,7 +37,13 @@ export function Institutions() {
     setPage(1)
   }
 
+  // "Latest request wins" sequence guard — same pattern as OrgPicker in SignUp.tsx. Without
+  // this, a slow, stale response (e.g. from a shorter, earlier-paused query) can resolve after
+  // a newer one and overwrite its correct results.
+  const requestSeqRef = useRef(0)
+
   useEffect(() => {
+    const seq = ++requestSeqRef.current
     const handle = setTimeout(() => {
       setLoading(true)
       setError(null)
@@ -48,9 +54,17 @@ export function Institutions() {
         page,
         pageSize: PAGE_SIZE,
       })
-        .then((data) => setResult({ items: data.items, total: data.total, totalPages: data.total_pages }))
-        .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load institutions.'))
-        .finally(() => setLoading(false))
+        .then((data) => {
+          if (seq !== requestSeqRef.current) return // a newer search superseded this one
+          setResult({ items: data.items, total: data.total, totalPages: data.total_pages })
+        })
+        .catch((err) => {
+          if (seq !== requestSeqRef.current) return
+          setError(err instanceof ApiError ? err.message : 'Could not load institutions.')
+        })
+        .finally(() => {
+          if (seq === requestSeqRef.current) setLoading(false)
+        })
     }, 300)
     return () => clearTimeout(handle)
   }, [query, country, region, page, retryToken])

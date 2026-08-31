@@ -49,11 +49,24 @@ async function handleErrorAndAuth(response: Response): Promise<void> {
   }
 }
 
+// Bounded client-side timeout so a hung/slow backend (e.g. a cold-starting Render instance)
+// can't leave a request — most importantly login — waiting indefinitely. Long enough to ride
+// out a real cold start, short enough to eventually surface a clear error instead of a spinner
+// that never resolves.
+const REQUEST_TIMEOUT_MS = 18_000
+
 async function fetchSafe(path: string, options: RequestInit): Promise<Response> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
-    return await fetch(`${API_BASE_URL}${path}`, options)
+    return await fetch(`${API_BASE_URL}${path}`, { ...options, signal: controller.signal })
   } catch {
+    // Covers both a real network/CORS failure and our own timeout abort (fetch rejects with an
+    // AbortError in that case) — either way there's no response to work with, so both collapse
+    // into the same "server unavailable" ApiError rather than an uncaught AbortError.
     throw new ApiError(0, 'Server unavailable. Check your connection and try again.')
+  } finally {
+    clearTimeout(timeoutId)
   }
 }
 

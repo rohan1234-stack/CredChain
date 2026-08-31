@@ -98,28 +98,30 @@ export function VerifierDashboard() {
         <EmptyState icon={Inbox} title="No requests yet" description="No requests yet." />
       ) : (
         <Card className="overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-line bg-canvas-2/50 text-left text-[11px] font-bold uppercase tracking-wider text-faint">
-                <th className="px-5 py-3">Student</th>
-                <th className="px-5 py-3">Purpose</th>
-                <th className="px-5 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {requests.slice(0, 8).map((r) => (
-                <tr key={r.id}>
-                  <td className="px-5 py-3 font-medium text-ink">{r.student_name}</td>
-                  <td className="px-5 py-3 text-body">{r.purpose}</td>
-                  <td className="px-5 py-3">
-                    <Badge tone={r.status === 'approved' ? 'good' : r.status === 'declined' ? 'bad' : 'warn'} size="sm">
-                      {r.status}
-                    </Badge>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line bg-canvas-2/50 text-left text-[11px] font-bold uppercase tracking-wider text-faint">
+                  <th className="px-5 py-3">Student</th>
+                  <th className="px-5 py-3">Purpose</th>
+                  <th className="px-5 py-3">Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {requests.slice(0, 8).map((r) => (
+                  <tr key={r.id}>
+                    <td className="px-5 py-3 font-medium text-ink">{r.student_name}</td>
+                    <td className="px-5 py-3 text-body">{r.purpose}</td>
+                    <td className="px-5 py-3">
+                      <Badge tone={r.status === 'approved' ? 'good' : r.status === 'declined' ? 'bad' : 'warn'} size="sm">
+                        {r.status}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </div>

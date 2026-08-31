@@ -155,38 +155,40 @@ export function InstitutionDashboard() {
         <EmptyState icon={FileText} title="No credentials yet" description="Credentials you issue will appear here." />
       ) : (
         <Card className="overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-line bg-canvas-2/50 text-left text-[11px] font-bold uppercase tracking-wider text-faint">
-                <th className="px-5 py-3">Credential</th>
-                <th className="px-5 py-3">Student</th>
-                <th className="px-5 py-3">Issued</th>
-                <th className="px-5 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {credentials.map((c) => {
-                const Icon = CREDENTIAL_TYPE_ICON[c.type]
-                return (
-                  <tr key={c.id}>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <IconTile icon={Icon} tone="neutral" size="sm" />
-                        <span className="font-medium text-ink">{c.title}</span>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3 text-body">{c.studentName ?? '—'}</td>
-                    <td className="px-5 py-3 text-body">{c.issuedDate}</td>
-                    <td className="px-5 py-3">
-                      <Badge tone={credentialStatusTone(c.status)} size="sm">
-                        {credentialStatusLabel(c.status)}
-                      </Badge>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line bg-canvas-2/50 text-left text-[11px] font-bold uppercase tracking-wider text-faint">
+                  <th className="px-5 py-3">Credential</th>
+                  <th className="px-5 py-3">Student</th>
+                  <th className="px-5 py-3">Issued</th>
+                  <th className="px-5 py-3">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {credentials.map((c) => {
+                  const Icon = CREDENTIAL_TYPE_ICON[c.type]
+                  return (
+                    <tr key={c.id}>
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <IconTile icon={Icon} tone="neutral" size="sm" />
+                          <span className="font-medium text-ink">{c.title}</span>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3 text-body">{c.studentName ?? '—'}</td>
+                      <td className="px-5 py-3 text-body">{c.issuedDate}</td>
+                      <td className="px-5 py-3">
+                        <Badge tone={credentialStatusTone(c.status)} size="sm">
+                          {credentialStatusLabel(c.status)}
+                        </Badge>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </div>

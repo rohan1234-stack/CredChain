@@ -80,9 +80,24 @@ export function SignUp() {
 
   if (user) return <Navigate to={ROLE_HOME[user.role]} replace />
 
-  async function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError(null)
+
+    // Some browsers/password managers can visually fill a controlled input without firing
+    // React's onChange, leaving that field's state stale even though the screen shows it
+    // filled in. FormData reads each input's real, current DOM value regardless of how it got
+    // there, so this catches that mismatch right before submit — a submit-time safety net, not
+    // a replacement for the controlled inputs above, which stay the source of truth otherwise.
+    const formValues = new FormData(e.currentTarget)
+    const effectiveFullName = fullName || ((formValues.get('fullName') as string) ?? '')
+    const effectiveEmail = email || ((formValues.get('email') as string) ?? '')
+    const effectivePassword = password || ((formValues.get('password') as string) ?? '')
+    const effectiveStudentIdentifier = studentIdentifier || ((formValues.get('studentIdentifier') as string) ?? '')
+    if (effectiveFullName !== fullName) setFullName(effectiveFullName)
+    if (effectiveEmail !== email) setEmail(effectiveEmail)
+    if (effectivePassword !== password) setPassword(effectivePassword)
+    if (effectiveStudentIdentifier !== studentIdentifier) setStudentIdentifier(effectiveStudentIdentifier)
 
     if (role === 'institution' && !institutionId) {
       setError('Select your institution from the directory to continue.')
@@ -95,9 +110,9 @@ export function SignUp() {
 
     setSubmitting(true)
 
-    const payload: RegisterPayload = { email, password, full_name: fullName, role }
+    const payload: RegisterPayload = { email: effectiveEmail, password: effectivePassword, full_name: effectiveFullName, role }
     if (role === 'student') {
-      payload.student_identifier = studentIdentifier
+      payload.student_identifier = effectiveStudentIdentifier
       if (institutionId) payload.institution_id = institutionId
     }
     if (role === 'institution') {
@@ -130,7 +145,14 @@ export function SignUp() {
         if (err.status === 0) setError('Server unavailable. Please try again in a moment.')
         else if (err.status === 409) setError(err.message)
         else if (err.status === 404) setError(err.message)
-        else if (err.status === 422) setError('Please check that all required fields are filled in correctly.')
+        else if (err.status === 422) {
+          // apiClient only ever surfaces err.message as a plain string when the backend sent one
+          // (see handleErrorAndAuth in apiClient.ts) — a raw FastAPI validation error array falls
+          // back to the generic "Request failed (422)" there, never a stack trace or internal
+          // detail, so it's always safe to show directly rather than always overwriting it.
+          const fallback = 'Please check that all required fields are filled in correctly.'
+          setError(err.message && err.message !== `Request failed (${err.status})` ? err.message : fallback)
+        }
         else setError('Something went wrong. Please try again.')
       } else {
         setError('Something went wrong. Please try again.')
@@ -187,15 +209,16 @@ export function SignUp() {
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <RecessedField label={role === 'institution' || role === 'verifier' ? 'Contact Name' : 'Name'} icon={User}>
-              <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} required autoComplete="name" className="w-full bg-transparent text-sm text-ink outline-none" />
+              <input name="fullName" type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} required autoComplete="name" className="w-full bg-transparent text-sm text-ink outline-none" />
             </RecessedField>
 
             <RecessedField label={role === 'institution' ? 'Official Email' : role === 'verifier' ? 'Business Email' : 'Email'} icon={Mail}>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" className="w-full bg-transparent text-sm text-ink outline-none" />
+              <input name="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" className="w-full bg-transparent text-sm text-ink outline-none" />
             </RecessedField>
 
             <RecessedField label="Password" icon={KeyRound}>
               <input
+                name="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -209,7 +232,7 @@ export function SignUp() {
             {role === 'student' && (
               <>
                 <RecessedField label="Student Identifier" icon={User}>
-                  <input type="text" value={studentIdentifier} onChange={(e) => setStudentIdentifier(e.target.value)} required className="w-full bg-transparent text-sm text-ink outline-none" />
+                  <input name="studentIdentifier" type="text" value={studentIdentifier} onChange={(e) => setStudentIdentifier(e.target.value)} required className="w-full bg-transparent text-sm text-ink outline-none" />
                 </RecessedField>
 
                 <OrgPicker<InstitutionSummary>

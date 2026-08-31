@@ -247,6 +247,61 @@ def test_company_open_positions_count_reflects_only_open_jobs(client, db_session
     assert draft["status"] == "draft"
 
 
+def test_company_page_batches_open_job_counts_correctly(client, db_session):
+    """
+    Regression test for the N+1 fix in company_service.to_page_response/_open_job_counts: a
+    page with several companies in different OPEN/CLOSED/DRAFT job mixes must still give each
+    row its own correct count from the single batched aggregate query, not a count that leaks
+    between rows, a stale/cached value, or a crash when a company has zero jobs.
+    """
+    co_a = _register_verifier(client, db_session, "batch-open-a@test.credchain.dev", "Batch Open Co A")
+    co_b = _register_verifier(client, db_session, "batch-open-b@test.credchain.dev", "Batch Open Co B")
+    _register_verifier(client, db_session, "batch-open-c@test.credchain.dev", "Batch Open Co C")
+
+    # Co A: two OPEN jobs.
+    for title in ("A Open Role 1", "A Open Role 2"):
+        job = client.post("/api/companies/me/jobs", json=_job_payload(title=title), headers=_auth_header(co_a["token"])).json()
+        client.post(f"/api/companies/me/jobs/{job['id']}/publish", headers=_auth_header(co_a["token"]))
+
+    # Co B: one OPEN job, one job published then CLOSED (must not count), and one still DRAFT.
+    open_b = client.post("/api/companies/me/jobs", json=_job_payload(title="B Open Role"), headers=_auth_header(co_b["token"])).json()
+    client.post(f"/api/companies/me/jobs/{open_b['id']}/publish", headers=_auth_header(co_b["token"]))
+    closed_b = client.post("/api/companies/me/jobs", json=_job_payload(title="B Closed Role"), headers=_auth_header(co_b["token"])).json()
+    client.post(f"/api/companies/me/jobs/{closed_b['id']}/publish", headers=_auth_header(co_b["token"]))
+    client.post(f"/api/companies/me/jobs/{closed_b['id']}/close", headers=_auth_header(co_b["token"]))
+    client.post("/api/companies/me/jobs", json=_job_payload(title="B Draft Role"), headers=_auth_header(co_b["token"]))
+
+    # Co C: no jobs at all — must still return 0, not a missing field or an error.
+
+    resp = client.get("/api/companies", params={"search": "Batch Open Co"})
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    by_name = {c["name"]: c for c in items}
+    assert set(by_name) == {"Batch Open Co A", "Batch Open Co B", "Batch Open Co C"}
+
+    assert by_name["Batch Open Co A"]["open_positions_count"] == 2
+    assert by_name["Batch Open Co B"]["open_positions_count"] == 1  # closed + draft excluded
+    assert by_name["Batch Open Co C"]["open_positions_count"] == 0  # no jobs at all
+
+    # Response shape is unchanged — every row still has exactly the documented CompanyProfileResponse fields.
+    expected_fields = {
+        "id", "name", "industry", "website", "description", "location", "company_size",
+        "created_at", "country", "region", "city", "logo_url", "source", "is_registered",
+        "verification_status", "open_positions_count",
+    }
+    assert set(by_name["Batch Open Co A"].keys()) == expected_fields
+
+
+def test_company_search_with_no_match_returns_empty_page_not_error(client, db_session):
+    """Guards _open_job_counts' early-return for an empty id list — a zero-row page must not
+    issue an invalid `IN ()` query or error, just an empty, well-formed page."""
+    resp = client.get("/api/companies", params={"search": "NoSuchCompanyNameXYZ123"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["items"] == []
+    assert body["total"] == 0
+
+
 def test_company_pagination_page_size_and_total(client, db_session):
     for i in range(5):
         _directory_company(db_session, f"Pagination Test Co {i}", industry="PaginationTestIndustry")
