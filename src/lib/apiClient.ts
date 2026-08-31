@@ -29,6 +29,24 @@ function authHeader(): HeadersInit {
   return authToken ? { Authorization: `Bearer ${authToken}` } : {}
 }
 
+/**
+ * FastAPI's default handler for a Pydantic request-validation failure (422) never sends a plain
+ * string `detail` — it's always an array of `{ loc, msg, type }` objects, one per failing field
+ * (e.g. our own password-strength check in schemas/auth.py: RegisterRequest._password_strength).
+ * Each `msg` is validator-authored, human-readable text — Pydantic v2 just prefixes a custom
+ * validator's raised message with "Value error, " — never a stack trace or internal path, so
+ * it's safe to show as-is once that prefix is stripped.
+ */
+function formatValidationErrors(errors: unknown[]): string | null {
+  const messages = errors
+    .map((e) => (e && typeof e === 'object' && 'msg' in e ? String((e as { msg: unknown }).msg) : null))
+    .filter((m): m is string => !!m)
+    .map((m) => m.replace(/^Value error,\s*/, '').trim())
+    .filter((m) => m.length > 0)
+  if (messages.length === 0) return null
+  return messages.map((m) => (/[.!?]$/.test(m) ? m : `${m}.`)).join(' ')
+}
+
 async function handleErrorAndAuth(response: Response): Promise<void> {
   if (response.status === 401) {
     // Token missing/invalid/expired — clear it and let AuthContext react
@@ -41,7 +59,11 @@ async function handleErrorAndAuth(response: Response): Promise<void> {
     let detail = `Request failed (${response.status})`
     try {
       const body = await response.json()
-      if (typeof body?.detail === 'string') detail = body.detail
+      if (typeof body?.detail === 'string') {
+        detail = body.detail
+      } else if (Array.isArray(body?.detail)) {
+        detail = formatValidationErrors(body.detail) ?? detail
+      }
     } catch {
       // response wasn't JSON — keep the default detail message
     }
